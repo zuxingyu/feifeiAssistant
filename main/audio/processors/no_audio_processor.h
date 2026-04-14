@@ -3,7 +3,6 @@
 
 #include <vector>
 #include <functional>
-#include <atomic>
 
 #include "audio_processor.h"
 #include "audio_codec.h"
@@ -26,10 +25,9 @@ public:
 private:
     AudioCodec* codec_ = nullptr;
     int frame_samples_ = 0;
-    std::vector<int16_t> output_buffer_;
     std::function<void(std::vector<int16_t>&& data)> output_callback_;
     std::function<void(bool speaking)> vad_state_change_callback_;
-    std::atomic<bool> is_running_ = false;
+    bool is_running_ = false;
 };
 
 #endif 

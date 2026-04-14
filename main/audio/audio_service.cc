@@ -265,23 +265,32 @@ void AudioService::AudioInputTask() {
             }
         }
 
-        /* Feed the wake word and/or audio processor */
-        if (bits & (AS_EVENT_WAKE_WORD_RUNNING | AS_EVENT_AUDIO_PROCESSOR_RUNNING)) {
-            int samples = 160; // 10ms
+        /* Feed the wake word */
+        if (bits & AS_EVENT_WAKE_WORD_RUNNING) {
             std::vector<int16_t> data;
-            if (ReadAudioData(data, 16000, samples)) {
-                if (bits & AS_EVENT_WAKE_WORD_RUNNING) {
+            int samples = wake_word_->GetFeedSize();
+            if (samples > 0) {
+                if (ReadAudioData(data, 16000, samples)) {
                     wake_word_->Feed(data);
+                    continue;
                 }
-                if (bits & AS_EVENT_AUDIO_PROCESSOR_RUNNING) {
-                    audio_processor_->Feed(std::move(data));
-                }
-                continue;
             }
         }
 
-        // Read timeout/error should not terminate the input task.
-        vTaskDelay(pdMS_TO_TICKS(10));
+        /* Feed the audio processor */
+        if (bits & AS_EVENT_AUDIO_PROCESSOR_RUNNING) {
+            std::vector<int16_t> data;
+            int samples = audio_processor_->GetFeedSize();
+            if (samples > 0) {
+                if (ReadAudioData(data, 16000, samples)) {
+                    audio_processor_->Feed(std::move(data));
+                    continue;
+                }
+            }
+        }
+
+        ESP_LOGE(TAG, "Should not be here, bits: %lx", bits);
+        break;
     }
 
     ESP_LOGW(TAG, "Audio input task stopped");
@@ -305,7 +314,6 @@ void AudioService::AudioOutputTask() {
             esp_timer_start_periodic(audio_power_timer_, AUDIO_POWER_CHECK_INTERVAL_MS * 1000);
             codec_->EnableOutput(true);
         }
-
         codec_->OutputData(task->pcm);
 
         /* Update the last output time */
@@ -505,16 +513,30 @@ void AudioService::PushTaskToEncodeQueue(AudioTaskType type, std::vector<int16_t
 
 bool AudioService::PushPacketToDecodeQueue(std::unique_ptr<AudioStreamPacket> packet, bool wait) {
     std::unique_lock<std::mutex> lock(audio_queue_mutex_);
+    decode_push_total_++;
     if (audio_decode_queue_.size() >= MAX_DECODE_PACKETS_IN_QUEUE) {
         if (wait) {
             audio_queue_cv_.wait(lock, [this]() { return audio_decode_queue_.size() < MAX_DECODE_PACKETS_IN_QUEUE; });
         } else {
+            decode_drop_total_++;
             return false;
         }
     }
     audio_decode_queue_.push_back(std::move(packet));
     audio_queue_cv_.notify_all();
     return true;
+}
+
+AudioQueuePressureStats AudioService::GetQueuePressureStats() {
+    std::lock_guard<std::mutex> lock(audio_queue_mutex_);
+    AudioQueuePressureStats stats;
+    stats.decode_queue_size = audio_decode_queue_.size();
+    stats.send_queue_size = audio_send_queue_.size();
+    stats.encode_queue_size = audio_encode_queue_.size();
+    stats.playback_queue_size = audio_playback_queue_.size();
+    stats.decode_push_total = decode_push_total_;
+    stats.decode_drop_total = decode_drop_total_;
+    return stats;
 }
 
 std::unique_ptr<AudioStreamPacket> AudioService::PopPacketFromSendQueue() {
@@ -637,20 +659,94 @@ void AudioService::PlaySound(const std::string_view& ogg) {
         codec_->EnableOutput(true);
     }
 
-    const auto* buf = reinterpret_cast<const uint8_t*>(ogg.data());
+    const uint8_t* buf = reinterpret_cast<const uint8_t*>(ogg.data());
     size_t size = ogg.size();
+    size_t offset = 0;
 
-    auto demuxer = std::make_unique<OggDemuxer>();
-    demuxer->OnDemuxerFinished([this](const uint8_t* data, int sample_rate, size_t size){
-        auto packet = std::make_unique<AudioStreamPacket>();
-        packet->sample_rate = sample_rate;
-        packet->frame_duration = 60;
-        packet->payload.resize(size);
-        std::memcpy(packet->payload.data(), data, size);
-        PushPacketToDecodeQueue(std::move(packet), true);
-    });
-    demuxer->Reset();
-    demuxer->Process(buf, size);
+    auto find_page = [&](size_t start)->size_t {
+        for (size_t i = start; i + 4 <= size; ++i) {
+            if (buf[i] == 'O' && buf[i+1] == 'g' && buf[i+2] == 'g' && buf[i+3] == 'S') return i;
+        }
+        return static_cast<size_t>(-1);
+    };
+
+    bool seen_head = false;
+    bool seen_tags = false;
+    int sample_rate = 16000; // 默认值
+
+    while (true) {
+        size_t pos = find_page(offset);
+        if (pos == static_cast<size_t>(-1)) break;
+        offset = pos;
+        if (offset + 27 > size) break;
+
+        const uint8_t* page = buf + offset;
+        uint8_t page_segments = page[26];
+        size_t seg_table_off = offset + 27;
+        if (seg_table_off + page_segments > size) break;
+
+        size_t body_size = 0;
+        for (size_t i = 0; i < page_segments; ++i) body_size += page[27 + i];
+
+        size_t body_off = seg_table_off + page_segments;
+        if (body_off + body_size > size) break;
+
+        // Parse packets using lacing
+        size_t cur = body_off;
+        size_t seg_idx = 0;
+        while (seg_idx < page_segments) {
+            size_t pkt_len = 0;
+            size_t pkt_start = cur;
+            bool continued = false;
+            do {
+                uint8_t l = page[27 + seg_idx++];
+                pkt_len += l;
+                cur += l;
+                continued = (l == 255);
+            } while (continued && seg_idx < page_segments);
+
+            if (pkt_len == 0) continue;
+            const uint8_t* pkt_ptr = buf + pkt_start;
+
+            if (!seen_head) {
+                // 解析OpusHead包
+                if (pkt_len >= 19 && std::memcmp(pkt_ptr, "OpusHead", 8) == 0) {
+                    seen_head = true;
+                    // OpusHead结构：[0-7] "OpusHead", [8] version, [9] channel_count, [10-11] pre_skip
+                    // [12-15] input_sample_rate, [16-17] output_gain, [18] mapping_family
+                    if (pkt_len >= 12) {
+                        uint8_t version = pkt_ptr[8];
+                        uint8_t channel_count = pkt_ptr[9];
+                        if (pkt_len >= 16) {
+                            // 读取输入采样率 (little-endian)
+                            sample_rate = pkt_ptr[12] | (pkt_ptr[13] << 8) |
+                                        (pkt_ptr[14] << 16) | (pkt_ptr[15] << 24);
+                            ESP_LOGI(TAG, "OpusHead: version=%d, channels=%d, sample_rate=%d",
+                                   version, channel_count, sample_rate);
+                        }
+                    }
+                }
+                continue;
+            }
+            if (!seen_tags) {
+                // Expect OpusTags in second packet
+                if (pkt_len >= 8 && std::memcmp(pkt_ptr, "OpusTags", 8) == 0) {
+                    seen_tags = true;
+                }
+                continue;
+            }
+
+            // Audio packet (Opus)
+            auto packet = std::make_unique<AudioStreamPacket>();
+            packet->sample_rate = sample_rate;
+            packet->frame_duration = 60;
+            packet->payload.resize(pkt_len);
+            std::memcpy(packet->payload.data(), pkt_ptr, pkt_len);
+            PushPacketToDecodeQueue(std::move(packet), true);
+        }
+
+        offset = body_off + body_size;
+    }
 }
 
 bool AudioService::IsIdle() {
@@ -679,18 +775,38 @@ void AudioService::ResetDecoder() {
     audio_queue_cv_.notify_all();
 }
 
+void AudioService::SetExternalPlaybackActive(bool active) {
+    external_playback_active_ = active;
+    last_output_time_ = std::chrono::steady_clock::now();
+
+    if (active) {
+        // 外部播放（例如 HTTP 音乐直链）期间，保持输出通道常开，避免省电定时器误关导致卡顿。
+        if (!codec_->output_enabled()) {
+            codec_->EnableOutput(true);
+        }
+        esp_timer_stop(audio_power_timer_);
+        esp_timer_start_periodic(audio_power_timer_, AUDIO_POWER_CHECK_INTERVAL_MS * 1000);
+    }
+}
+
 void AudioService::CheckAndUpdateAudioPowerState() {
     auto now = std::chrono::steady_clock::now();
     auto input_elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_input_time_).count();
     auto output_elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_output_time_).count();
+
+    if (external_playback_active_) {
+        // 外部播放期间允许关闭输入省电，但保持输出开启，防止播放中断/抖动。
+        if (input_elapsed > AUDIO_POWER_TIMEOUT_MS && codec_->input_enabled()) {
+            codec_->EnableInput(false);
+        }
+        return;
+    }
+
     if (input_elapsed > AUDIO_POWER_TIMEOUT_MS && codec_->input_enabled()) {
         codec_->EnableInput(false);
     }
     if (output_elapsed > AUDIO_POWER_TIMEOUT_MS && codec_->output_enabled()) {
-        // Keep TX clock when duplex RX is active; otherwise RX may stall on some boards.
-        if (!(codec_->duplex() && codec_->input_enabled())) {
-            codec_->EnableOutput(false);
-        }
+        codec_->EnableOutput(false);
     }
     if (!codec_->input_enabled() && !codec_->output_enabled()) {
         esp_timer_stop(audio_power_timer_);

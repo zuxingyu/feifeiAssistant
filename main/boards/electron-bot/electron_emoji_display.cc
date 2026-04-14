@@ -15,6 +15,7 @@
 ElectronEmojiDisplay::ElectronEmojiDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel_handle_t panel, int width, int height, int offset_x, int offset_y, bool mirror_x, bool mirror_y,
                                            bool swap_xy)
     : SpiLcdDisplay(panel_io, panel, width, height, offset_x, offset_y, mirror_x, mirror_y, swap_xy) {
+    SetupChatLabel();
 }
 
 void ElectronEmojiDisplay::SetupUI() {
@@ -24,12 +25,9 @@ void ElectronEmojiDisplay::SetupUI() {
         return;
     }
     
-    // Call parent SetupUI() first to create all lvgl objects (including container_)
+    // Call parent SetupUI() first to create all lvgl objects
     SpiLcdDisplay::SetupUI();
-
-    // Setup chat label after parent UI is initialized so that container_ is valid
-    SetupChatLabel();
-
+    
     // Set default emotion after UI is initialized
     SetEmotion("staticstate");
 }
@@ -42,22 +40,18 @@ void ElectronEmojiDisplay::InitializeElectronEmojis() {
 }
 
 void ElectronEmojiDisplay::SetupChatLabel() {
-    // Create/recreate the chat label under the display lock
-    {
-        DisplayLockGuard lock(this);
+    DisplayLockGuard lock(this);
 
-        if (chat_message_label_) {
-            lv_obj_del(chat_message_label_);
-        }
-
-        chat_message_label_ = lv_label_create(container_);
-        lv_label_set_text(chat_message_label_, "");
-        lv_obj_set_width(chat_message_label_, width_ * 0.9);
-        lv_label_set_long_mode(chat_message_label_, LV_LABEL_LONG_SCROLL_CIRCULAR);
-        lv_obj_set_style_text_align(chat_message_label_, LV_TEXT_ALIGN_CENTER, 0);
-        lv_obj_set_style_text_color(chat_message_label_, lv_color_white(), 0);
+    if (chat_message_label_) {
+        lv_obj_del(chat_message_label_);
     }
-    // SetTheme acquires DisplayLockGuard internally, so call it after releasing the lock above
+
+    chat_message_label_ = lv_label_create(container_);
+    lv_label_set_text(chat_message_label_, "");
+    lv_obj_set_width(chat_message_label_, width_ * 0.9);                        // 限制宽度为屏幕宽度的 90%
+    lv_label_set_long_mode(chat_message_label_, LV_LABEL_LONG_SCROLL_CIRCULAR);            // 设置为自动换行模式
+    lv_obj_set_style_text_align(chat_message_label_, LV_TEXT_ALIGN_CENTER, 0);  // 设置文本居中对齐
+    lv_obj_set_style_text_color(chat_message_label_, lv_color_white(), 0);
     SetTheme(LvglThemeManager::GetInstance().GetTheme("dark"));
 }
 

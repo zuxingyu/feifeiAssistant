@@ -174,15 +174,11 @@ void LvglDisplay::UpdateStatusBar(bool update_all) {
             lv_label_set_text(battery_label_, battery_icon_);
         }
 
-        // Check low battery popup only when clock tick event is triggered
-        // Because when initializing, the battery level is not ready yet.
-        if (low_battery_popup_ != nullptr && !update_all) {
+        if (low_battery_popup_ != nullptr) {
             if (strcmp(icon, FONT_AWESOME_BATTERY_EMPTY) == 0 && discharging) {
                 if (lv_obj_has_flag(low_battery_popup_, LV_OBJ_FLAG_HIDDEN)) { // Show if low battery popup is hidden
                     lv_obj_remove_flag(low_battery_popup_, LV_OBJ_FLAG_HIDDEN);
-                    app.Schedule([&app]() {
-                        app.PlaySound(Lang::Sounds::OGG_LOW_BATTERY);
-                    });
+                    app.PlaySound(Lang::Sounds::OGG_LOW_BATTERY);
                 }
             } else {
                 // Hide the low battery popup when the battery is not empty

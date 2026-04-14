@@ -24,7 +24,7 @@
 static const char *TAG = "WifiBoard";
 
 // Connection timeout in seconds
-static constexpr int CONNECT_TIMEOUT_SEC = 60;
+static constexpr int CONNECT_TIMEOUT_SEC = 30;
 
 WifiBoard::WifiBoard() {
     // Create connection timeout timer
@@ -59,16 +59,17 @@ void WifiBoard::StartNetwork() {
     wifi_manager.Initialize(config);
 
     // Set unified event callback - forward to NetworkEvent with SSID data
-    wifi_manager.SetEventCallback([this](WifiEvent event, const std::string& data) {
+    wifi_manager.SetEventCallback([this, &wifi_manager](WifiEvent event) {
+        std::string ssid = wifi_manager.GetSsid();
         switch (event) {
             case WifiEvent::Scanning:
                 OnNetworkEvent(NetworkEvent::Scanning);
                 break;
             case WifiEvent::Connecting:
-                OnNetworkEvent(NetworkEvent::Connecting, data);
+                OnNetworkEvent(NetworkEvent::Connecting, ssid);
                 break;
             case WifiEvent::Connected:
-                OnNetworkEvent(NetworkEvent::Connected, data);
+                OnNetworkEvent(NetworkEvent::Connected, ssid);
                 break;
             case WifiEvent::Disconnected:
                 OnNetworkEvent(NetworkEvent::Disconnected);

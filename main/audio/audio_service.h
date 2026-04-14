@@ -23,7 +23,7 @@
 #include "processors/audio_debugger.h"
 #include "wake_word.h"
 #include "protocol.h"
-#include "ogg_demuxer.h"
+
 
 /*
  * There are two types of audio data flow:
@@ -102,6 +102,15 @@ struct DebugStatistics {
     uint32_t playback_count = 0;
 };
 
+struct AudioQueuePressureStats {
+    size_t decode_queue_size = 0;
+    size_t send_queue_size = 0;
+    size_t encode_queue_size = 0;
+    size_t playback_queue_size = 0;
+    uint32_t decode_push_total = 0;
+    uint32_t decode_drop_total = 0;
+};
+
 class AudioService {
 public:
     AudioService();
@@ -133,6 +142,8 @@ public:
     bool ReadAudioData(std::vector<int16_t>& data, int sample_rate, int samples);
     void ResetDecoder();
     void SetModelsList(srmodel_list_t* models_list);
+    void SetExternalPlaybackActive(bool active);
+    AudioQueuePressureStats GetQueuePressureStats();
 
 private:
     AudioCodec* codec_ = nullptr;
@@ -179,6 +190,9 @@ private:
     bool voice_detected_ = false;
     bool service_stopped_ = true;
     bool audio_input_need_warmup_ = false;
+    bool external_playback_active_ = false;
+    uint32_t decode_push_total_ = 0;
+    uint32_t decode_drop_total_ = 0;
 
     esp_timer_handle_t audio_power_timer_ = nullptr;
     std::chrono::steady_clock::time_point last_input_time_;
