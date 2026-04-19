@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>配置完成 - 小智AI</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            background: linear-gradient(135deg, #00c6ff 0%, #0072ff 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+            font-family: 'PingFang SC', 'Microsoft YaHei', sans-serif;
+        }
+        .container {
+            background: #fff;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            width: 100%;
+            max-width: 420px;
+            overflow: hidden;
+        }
+        .header {
+            background: linear-gradient(135deg, #00c6ff 0%, #0072ff 100%);
+            color: #fff;
+            padding: 30px 25px;
+            text-align: center;
+        }
+        .header-icon {
+            font-size: 50px;
+            margin-bottom: 10px;
+        }
+        .header h1 { font-size: 22px; margin-bottom: 5px; }
+        .header p { font-size: 13px; opacity: 0.9; }
+        .step-bar {
+            display: flex;
+            justify-content: center;
+            padding: 15px 0;
+            background: #f8f9fa;
+        }
+        .step { display: flex; align-items: center; gap: 4px; font-size: 11px; color: #999; }
+        .step.done { color: #4caf50; }
+        .step-num {
+            width: 20px; height: 20px; border-radius: 50%;
+            background: #4caf50; color: #fff;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 10px;
+        }
+        .step-connector { width: 25px; height: 2px; background: #4caf50; margin: 0 3px; }
+        .body { padding: 25px; text-align: center; }
+        .success-icon {
+            font-size: 60px;
+            color: #4caf50;
+            margin-bottom: 15px;
+        }
+        .body h2 { font-size: 18px; margin-bottom: 10px; }
+        .body p { font-size: 13px; color: #666; line-height: 1.6; margin-bottom: 20px; }
+        .summary {
+            background: #f8f9fa;
+            border-radius: 10px;
+            padding: 15px;
+            margin-bottom: 20px;
+            text-align: left;
+        }
+        .summary-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px solid #e0e0e0;
+            font-size: 13px;
+        }
+        .summary-item:last-child { border-bottom: none; }
+        .summary-label { color: #666; }
+        .summary-value { color: #333; font-weight: 500; }
+        .next-step {
+            background: #e8f4ff;
+            border-radius: 10px;
+            padding: 15px;
+            margin-bottom: 20px;
+            text-align: left;
+            font-size: 12px;
+            color: #333;
+            line-height: 1.8;
+        }
+        .next-step strong { color: #0072ff; }
+        .btn-area { display: flex; gap: 10px; }
+        .btn {
+            flex: 1; padding: 14px; border: none;
+            border-radius: 10px; font-size: 15px;
+            font-weight: bold; cursor: pointer; transition: all 0.2s;
+        }
+        .btn-reconfig { background: #f0f0f0; color: #666; }
+        .btn-reconfig:hover { background: #e0e0e0; }
+        .btn-start {
+            background: linear-gradient(135deg, #00c6ff 0%, #0072ff 100%);
+            color: #fff;
+        }
+        .btn-start:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 5px 15px rgba(0, 114, 255, 0.4);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="header-icon"><i class="fas fa-rocket"></i></div>
+            <h1>配置完成!</h1>
+            <p>小智AI正在启动...</p>
+        </div>
+
+        <div class="step-bar">
+            <div class="step done"><div class="step-num"><i class="fas fa-check"></i></div></div>
+            <div class="step-connector"></div>
+            <div class="step done"><div class="step-num"><i class="fas fa-check"></i></div></div>
+            <div class="step-connector"></div>
+            <div class="step done"><div class="step-num"><i class="fas fa-check"></i></div></div>
+            <div class="step-connector"></div>
+            <div class="step done"><div class="step-num"><i class="fas fa-check"></i></div></div>
+        </div>
+
+        <div class="body">
+            <div class="success-icon"><i class="fas fa-circle-check"></i></div>
+
+            <h2>所有配置已完成!</h2>
+            <p>设备正在连接网络,即将进入主页面</p>
+
+            <div class="summary">
+                <div class="summary-item">
+                    <span class="summary-label"><i class="fas fa-wifi" style="margin-right:5px;color:#667eea;"></i>WiFi</span>
+                    <span class="summary-value">Xiaomi_5G</span>
+                </div>
+                <div class="summary-item">
+                    <span class="summary-label"><i class="fas fa-calendar-alt" style="margin-right:5px;color:#11998e;"></i>学期</span>
+                    <span class="summary-value">2025.02.17 - 2025.07.04</span>
+                </div>
+                <div class="summary-item">
+                    <span class="summary-label"><i class="fas fa-cloud-sun" style="margin-right:5px;color:#ee0979;"></i>城市</span>
+                    <span class="summary-value">深圳</span>
+                </div>
+            </div>
+
+            <div class="next-step">
+                <strong>下一步:</strong><br>
+                设备联网后,主页将显示小智的绑定号码。<br>
+                在小智网站控制台输入号码即可完成绑定。
+            </div>
+
+            <div class="btn-area">
+                <button class="btn btn-reconfig" onclick="location.href='setup-wifi.html'">
+                    <i class="fas fa-redo"></i> 重新配置
+                </button>
+                <button class="btn btn-start" onclick="location.href='device-home.html'">
+                    预览主页 <i class="fas fa-home"></i>
+                </button>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
