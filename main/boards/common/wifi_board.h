@@ -15,24 +15,24 @@ protected:
     virtual std::string GetBoardJson() override;
 
     /**
-     * Handle network event (called from WiFi manager callbacks)
-     * @param event The network event type
-     * @param data Additional data (e.g., SSID for Connecting/Connected events)
+     * 处理网络事件（由 WiFiManager 的回调转发而来）
+     * @param event 网络事件类型
+     * @param data 附加数据，例如 Connecting/Connected 阶段的 SSID
      */
     void OnNetworkEvent(NetworkEvent event, const std::string& data = "");
 
     /**
-     * Start WiFi connection attempt
+     * 发起 Wi-Fi 连接尝试
      */
     void TryWifiConnect();
 
     /**
-     * Enter WiFi configuration mode
+     * 进入 Wi-Fi 配网模式
      */
     void StartWifiConfigMode();
 
     /**
-     * WiFi connection timeout callback
+     * Wi-Fi 连接超时回调
      */
     static void OnWifiConnectTimeout(void* arg);
 
@@ -43,8 +43,8 @@ public:
     virtual std::string GetBoardType() override;
     
     /**
-     * Start network connection asynchronously
-     * This function returns immediately. Network events are notified through the callback set by SetNetworkEventCallback().
+     * 异步启动网络连接
+     * 该函数会立即返回，网络状态通过 SetNetworkEventCallback() 注册的回调通知上层。
      */
     virtual void StartNetwork() override;
     
@@ -56,12 +56,12 @@ public:
     virtual std::string GetDeviceStatusJson() override;
     
     /**
-     * Enter WiFi configuration mode (thread-safe, can be called from any task)
+     * 进入 Wi-Fi 配网模式（线程安全，可在任意任务中调用）
      */
     void EnterWifiConfigMode();
     
     /**
-     * Check if in WiFi config mode
+     * 判断当前是否处于 Wi-Fi 配网模式
      */
     bool IsInWifiConfigMode() const;
 };

@@ -23,11 +23,11 @@
 
 static const char *TAG = "WifiBoard";
 
-// Connection timeout in seconds
+// Wi-Fi 连接超时时间，单位为秒。
 static constexpr int CONNECT_TIMEOUT_SEC = 60;
 
 WifiBoard::WifiBoard() {
-    // Create connection timeout timer
+    // 创建 Wi-Fi 连接超时定时器。
     esp_timer_create_args_t timer_args = {
         .callback = OnWifiConnectTimeout,
         .arg = this,
@@ -52,13 +52,13 @@ std::string WifiBoard::GetBoardType() {
 void WifiBoard::StartNetwork() {
     auto& wifi_manager = WifiManager::GetInstance();
 
-    // Initialize WiFi manager
+    // 初始化 WiFi 管理器。
     WifiManagerConfig config;
     config.ssid_prefix = "Xiaozhi";
     config.language = Lang::CODE;
     wifi_manager.Initialize(config);
 
-    // Set unified event callback - forward to NetworkEvent with SSID data
+    // 统一转发 Wi-Fi 事件，供 Application 更新 UI 和状态机。
     wifi_manager.SetEventCallback([this](WifiEvent event, const std::string& data) {
         switch (event) {
             case WifiEvent::Scanning:
@@ -82,7 +82,7 @@ void WifiBoard::StartNetwork() {
         }
     });
 
-    // Try to connect or enter config mode
+    // 尝试连接已保存网络，或者直接进入配网模式。
     TryWifiConnect();
 }
 
@@ -91,13 +91,13 @@ void WifiBoard::TryWifiConnect() {
     bool have_ssid = !ssid_manager.GetSsidList().empty();
 
     if (have_ssid) {
-        // Start connection attempt with timeout
+        // 已有保存的 SSID，启动 STA 连接并开启超时保护。
         ESP_LOGI(TAG, "Starting WiFi connection attempt");
         esp_timer_start_once(connect_timer_, CONNECT_TIMEOUT_SEC * 1000000ULL);
         WifiManager::GetInstance().StartStation();
     } else {
-        // No SSID configured, enter config mode
-        // Wait for the board version to be shown
+        // 没有保存过 SSID，延时片刻后进入配网模式，
+        // 让开机时的板卡版本信息先显示出来。
         vTaskDelay(pdMS_TO_TICKS(1500));
         StartWifiConfigMode();
     }
@@ -106,10 +106,10 @@ void WifiBoard::TryWifiConnect() {
 void WifiBoard::OnNetworkEvent(NetworkEvent event, const std::string& data) {
     switch (event) {
         case NetworkEvent::Connected:
-            // Stop timeout timer
+            // 连接成功后停止超时定时器。
             esp_timer_stop(connect_timer_);
 #ifdef CONFIG_USE_ESP_BLUFI_WIFI_PROVISIONING
-            // make sure blufi resources has been released
+            // 确保 Blufi 资源已经释放。
             Blufi::GetInstance().deinit();
 #endif
             in_config_mode_ = false;
@@ -131,14 +131,14 @@ void WifiBoard::OnNetworkEvent(NetworkEvent event, const std::string& data) {
         case NetworkEvent::WifiConfigModeExit:
             ESP_LOGI(TAG, "WiFi config mode exited");
             in_config_mode_ = false;
-            // Try to connect with the new credentials
+            // 配网退出后，使用新凭据重新尝试联网。
             TryWifiConnect();
             break;
         default:
             break;
     }
 
-    // Notify external callback if set
+    // 将事件继续通知给外部注册者，例如 Application。
     if (network_event_callback_) {
         network_event_callback_(event, data);
     }
@@ -158,14 +158,14 @@ void WifiBoard::OnWifiConnectTimeout(void* arg) {
 
 void WifiBoard::StartWifiConfigMode() {
     in_config_mode_ = true;
-    // Transition to wifi configuring state
+    // 切换到 Wi-Fi 配网状态。
     Application::GetInstance().SetDeviceState(kDeviceStateWifiConfiguring);
 #ifdef CONFIG_USE_HOTSPOT_WIFI_PROVISIONING
     auto& wifi_manager = WifiManager::GetInstance();
 
     wifi_manager.StartConfigAp();
 
-    // Show config prompt after a short delay
+    // 稍后弹出提示，告诉用户热点名和访问地址。
     Application::GetInstance().Schedule([&wifi_manager]() {
         std::string hint = Lang::Strings::CONNECT_TO_HOTSPOT;
         hint += wifi_manager.GetApSsid();
@@ -176,11 +176,11 @@ void WifiBoard::StartWifiConfigMode() {
     });
 #elif CONFIG_USE_ESP_BLUFI_WIFI_PROVISIONING
     auto &blufi = Blufi::GetInstance();
-    // initialize esp-blufi protocol
+    // 初始化 ESP-BLUFI 配网协议。
     blufi.init();
 #endif
 #if CONFIG_USE_ACOUSTIC_WIFI_PROVISIONING
-    // Start acoustic provisioning task
+    // 启动声波配网任务。
     auto codec = Board::GetInstance().GetAudioCodec();
     int channel = codec ? codec->input_channels() : 1;
     ESP_LOGI(TAG, "Starting acoustic WiFi provisioning, channels: %d", channel);
@@ -204,20 +204,20 @@ void WifiBoard::EnterWifiConfigMode() {
     auto state = app.GetDeviceState();
 
     if (state == kDeviceStateSpeaking || state == kDeviceStateListening || state == kDeviceStateIdle) {
-        // Reset protocol (close audio channel, reset protocol)
+        // 先重置协议栈，关闭当前音频通道，避免配网与会话同时进行。
         Application::GetInstance().ResetProtocol();
 
         xTaskCreate([](void* arg) {
             auto* board = static_cast<WifiBoard*>(arg);
 
-            // Wait for 1 second to allow speaking to finish gracefully
+            // 延时 1 秒，给正在播报的语音一个相对平滑的收尾时间。
             vTaskDelay(pdMS_TO_TICKS(1000));
 
-            // Stop any ongoing connection attempt
+            // 停止当前可能仍在进行的联网尝试。
             esp_timer_stop(board->connect_timer_);
             WifiManager::GetInstance().StopStation();
 
-            // Enter config mode
+            // 正式进入配网模式。
             board->StartWifiConfigMode();
 
             vTaskDelete(NULL);
@@ -230,7 +230,7 @@ void WifiBoard::EnterWifiConfigMode() {
         return;
     }
 
-    // Stop any ongoing connection attempt
+    // 启动阶段切入配网时，也先停止已有连接尝试。
     esp_timer_stop(connect_timer_);
     WifiManager::GetInstance().StopStation();
 

@@ -3,29 +3,35 @@
 
 #include <driver/gpio.h>
 
+// 板级总线定义
 #define ESP32_I2C_HOST      I2C_NUM_0
 #define ESP32_LCD_HOST      SPI3_HOST
 
+// 音频采样率配置
 #define AUDIO_INPUT_SAMPLE_RATE  24000
 #define AUDIO_OUTPUT_SAMPLE_RATE 24000
 
+// 麦克风参考信号配置
 #define AUDIO_INPUT_REFERENCE    true
 
+// I2S 音频引脚
 #define AUDIO_I2S_GPIO_MCLK  GPIO_NUM_16
 #define AUDIO_I2S_GPIO_WS    GPIO_NUM_45
 #define AUDIO_I2S_GPIO_BCLK  GPIO_NUM_9
 #define AUDIO_I2S_GPIO_DIN   GPIO_NUM_10
 #define AUDIO_I2S_GPIO_DOUT  GPIO_NUM_8
 
+// 音频编解码器与功放控制引脚
 #define AUDIO_CODEC_PA_PIN       GPIO_NUM_46
 #define AUDIO_CODEC_I2C_SDA_PIN  GPIO_NUM_13
 #define AUDIO_CODEC_I2C_SCL_PIN  GPIO_NUM_14
 #define AUDIO_CODEC_ES8311_ADDR  ES8311_CODEC_DEFAULT_ADDR
 #define AUDIO_CODEC_ES7210_ADDR  ES7210_CODEC_DEFAULT_ADDR
 
+// 启动按键
 #define BOOT_BUTTON_GPIO        GPIO_NUM_0
 
-
+// 反射式 LCD 接口引脚
 #define RLCD_DC_PIN    GPIO_NUM_5  
 #define RLCD_CS_PIN    GPIO_NUM_40
 #define RLCD_SCK_PIN   GPIO_NUM_11
@@ -33,13 +39,16 @@
 #define RLCD_RST_PIN   GPIO_NUM_41
 #define RLCD_TE_PIN    GPIO_NUM_6
 
+// 屏幕分辨率
 #define RLCD_WIDTH   400
 #define RLCD_HEIGHT  300
 
+// LVGL 显示方向配置
 #define DISPLAY_MIRROR_X false
 #define DISPLAY_MIRROR_Y false
 #define DISPLAY_SWAP_XY  false
 
+// 显示偏移
 #define DISPLAY_OFFSET_X  0
 #define DISPLAY_OFFSET_Y  0
 

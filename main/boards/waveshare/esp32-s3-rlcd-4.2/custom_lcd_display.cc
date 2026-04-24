@@ -17,6 +17,7 @@ void CustomLcdDisplay::Lvgl_flush_cb(lv_display_t * disp, const lv_area_t * area
     assert(disp != NULL);
     CustomLcdDisplay *Disp = (CustomLcdDisplay *)lv_display_get_user_data(disp);
     uint16_t *buffer = (uint16_t *)color_p;
+    // LVGL 输出的是 RGB565，这里按阈值转换成 RLCD 使用的黑白位图格式。
   	for(int y = area->y1; y <= area->y2; y++)
   	{
   	 	for(int x = area->x1; x <= area->x2; x++) 
@@ -79,13 +80,15 @@ height_(height)
     ESP_ERROR_CHECK_WITHOUT_ABORT(gpio_config(&gpio_conf));
     Set_ResetIOLevel(1);
 
-    DisplayLen                = transfer >> 3; //(1byte 8ipex)
+    // RLCD 采用 1bit 黑白像素格式，因此每 8 个像素占 1 字节。
+    DisplayLen                = transfer >> 3;
     DispBuffer                = (uint8_t *) heap_caps_malloc(DisplayLen, MALLOC_CAP_SPIRAM);
     assert(DispBuffer);
 	PixelIndexLUT = (uint16_t (*)[300])heap_caps_malloc(transfer * sizeof(uint16_t), MALLOC_CAP_SPIRAM);
 	PixelBitLUT   = (uint8_t (*)[300])heap_caps_malloc(transfer * sizeof(uint8_t), MALLOC_CAP_SPIRAM);
     assert(PixelIndexLUT);
     assert(PixelBitLUT);
+    // 根据屏幕方向提前生成像素查找表，刷新时直接定位到目标字节和位。
     if(width_ == 400) {
         InitLandscapeLUT();
     } else {
@@ -100,7 +103,7 @@ height_(height)
     lvgl_port_init(&port_cfg);
     lvgl_port_lock(0);
 
-    display_ = lv_display_create(width, height); /* 以水平和垂直分辨率（像素）进行基本初始化 */
+    display_ = lv_display_create(width, height); /* 按水平和垂直像素分辨率完成显示对象基础初始化 */
     lv_display_set_flush_cb(display_, Lvgl_flush_cb);
     lv_display_set_user_data(display_, this);
 	size_t lvgl_buffer_size = LV_COLOR_FORMAT_GET_SIZE(LV_COLOR_FORMAT_RGB565) * transfer;
@@ -117,8 +120,8 @@ height_(height)
         return;
     }
 
-    // Note: SetupUI() should be called by Application::Initialize(), not in constructor
-    // to ensure lvgl objects are created after the display is fully initialized.
+    // 注意：SetupUI() 不应在构造函数内调用，而应由 Application::Initialize() 调用，
+    // 这样可以确保 LVGL 对象是在显示硬件和底层缓冲都初始化完成后再创建。
 }
 
 CustomLcdDisplay::~CustomLcdDisplay() {
@@ -135,6 +138,7 @@ void CustomLcdDisplay::InitPortraitLUT() {
             uint16_t byte_x = x >> 2;
             uint8_t  local_x = x & 3;
 
+            // 竖屏模式下，显存按 4x2 像素块编码。
             uint32_t index = byte_y * W4 + byte_x;
             uint8_t bit = 7 - ((local_x << 1) | local_y);
 
@@ -156,6 +160,7 @@ void CustomLcdDisplay::InitLandscapeLUT() {
             uint16_t byte_x = x >> 1;
             uint8_t  local_x = x & 1;
 
+            // 横屏模式下，显存按 2x4 像素块编码，并对 Y 方向做翻转适配。
             uint32_t index = byte_x * H4 + block_y;
             uint8_t bit = 7 - ((local_y << 1) | local_x);
 
@@ -197,18 +202,18 @@ void CustomLcdDisplay::RLCD_ColorClear(uint8_t color) {
 void CustomLcdDisplay::RLCD_Init() {
     RLCD_Reset();
 
-    RLCD_SendCommand(0xD6);  // NVM Load Control
+    RLCD_SendCommand(0xD6);  // NVM 装载控制
 	RLCD_SendData(0x17);
 	RLCD_SendData(0x02);
 
-	RLCD_SendCommand(0xD1); //Booster Enable
+	RLCD_SendCommand(0xD1); // 使能升压电路
 	RLCD_SendData(0x01);
 
-	RLCD_SendCommand(0xC0); //Gate Voltage Control
+	RLCD_SendCommand(0xC0); // 栅极电压控制
 	RLCD_SendData(0x11);   
 	RLCD_SendData(0x04);   
 
-	RLCD_SendCommand(0xC1); //VSHP Setting
+	RLCD_SendCommand(0xC1); // VSHP 电压设置
 	RLCD_SendData(0x69);
 	RLCD_SendData(0x69);
 	RLCD_SendData(0x69);
@@ -324,15 +329,15 @@ void CustomLcdDisplay::RLCD_SetPixel(uint16_t x, uint16_t y, uint8_t color) {
 }
 
 void CustomLcdDisplay::RLCD_Display() {
-    RLCD_SendCommand(0x2A);     // Column Address Set
+    RLCD_SendCommand(0x2A);     // 设置列地址范围
   	RLCD_SendData(0x12);
   	RLCD_SendData(0x2A);
 
-  	RLCD_SendCommand(0x2B);     // Page Address Set
+  	RLCD_SendCommand(0x2B);     // 设置页地址范围
   	RLCD_SendData(0x00);
   	RLCD_SendData(0xC7);
 
-  	RLCD_SendCommand(0x2c);     // Page Address Set
+  	RLCD_SendCommand(0x2c);     // 开始写入显存
 
 	RLCD_Sendbuffera(DispBuffer,DisplayLen);
 }

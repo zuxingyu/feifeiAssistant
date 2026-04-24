@@ -9,6 +9,7 @@ enum ColorSelection {
     ColorWhite = 0xff
 };
 
+// 反射式 LCD 所需的 SPI 引脚配置
 typedef struct {
     uint8_t mosi;
     uint8_t scl;
@@ -20,6 +21,7 @@ typedef struct {
 class CustomLcdDisplay : public LcdDisplay {
 private:
     esp_lcd_panel_io_handle_t io_handle = NULL;
+    // 这两个成员当前未实际使用，先保留以兼容既有实现。
     uint32_t            i2c_data_pdMS_TICKS = 0;
     uint32_t            i2c_done_pdMS_TICKS = 0;
     const char         *TAG                 = "CustomDisplay";
@@ -30,8 +32,10 @@ private:
     int                 rst_;
     int                 width_;
     int                 height_;
+    // RLCD 的整屏位图缓存，1 bit 表示一个像素的黑白状态。
     uint8_t            *DispBuffer = NULL;
     int                 DisplayLen;
+    // 预计算像素坐标到缓冲区字节索引/位掩码的映射，减少刷新时运算量。
 	uint16_t (*PixelIndexLUT)[300];
 	uint8_t  (*PixelBitLUT  )[300];
 	void InitPortraitLUT();

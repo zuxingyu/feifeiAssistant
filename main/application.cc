@@ -62,13 +62,13 @@ void Application::Initialize() {
     auto& board = Board::GetInstance();
     SetDeviceState(kDeviceStateStarting);
 
-    // Setup the display
+    // 初始化显示层并创建界面控件。
     auto display = board.GetDisplay();
     display->SetupUI();
-    // Print board name/version info
+    // 在聊天区显示板卡/固件标识信息。
     display->SetChatMessage("system", SystemInfo::GetUserAgent().c_str());
 
-    // Setup the audio service
+    // 初始化并启动音频服务。
     auto codec = board.GetAudioCodec();
     audio_service_.Initialize(codec);
     audio_service_.Start();
@@ -85,20 +85,20 @@ void Application::Initialize() {
     };
     audio_service_.SetCallbacks(callbacks);
 
-    // Add state change listeners
+    // 注册状态机监听器，状态变化后交给主循环统一处理。
     state_machine_.AddStateChangeListener([this](DeviceState old_state, DeviceState new_state) {
         xEventGroupSetBits(event_group_, MAIN_EVENT_STATE_CHANGED);
     });
 
-    // Start the clock timer to update the status bar
+    // 启动时钟定时器，用于刷新状态栏时间、电量和网络图标。
     esp_timer_start_periodic(clock_timer_handle_, 1000000);
 
-    // Add MCP common tools (only once during initialization)
+    // 启动阶段注册 MCP 通用工具。
     auto& mcp_server = McpServer::GetInstance();
     mcp_server.AddCommonTools();
     mcp_server.AddUserOnlyTools();
 
-    // Set network event callback for UI updates and network state handling
+    // 绑定网络事件回调，用于同步 UI 和驱动应用状态迁移。
     board.SetNetworkEventCallback([this](NetworkEvent event, const std::string& data) {
         auto display = Board::GetInstance().GetDisplay();
         
@@ -109,10 +109,10 @@ void Application::Initialize() {
                 break;
             case NetworkEvent::Connecting: {
                 if (data.empty()) {
-                    // Cellular network - registering without carrier info yet
+                    // 蜂窝网络注册中，但暂时还没有运营商名称。
                     display->SetStatus(Lang::Strings::REGISTERING_NETWORK);
                 } else {
-                    // WiFi or cellular with carrier info
+                    // Wi-Fi 或已获得运营商名称的蜂窝网络。
                     std::string msg = Lang::Strings::CONNECT_TO;
                     msg += data;
                     msg += "...";
@@ -131,12 +131,12 @@ void Application::Initialize() {
                 xEventGroupSetBits(event_group_, MAIN_EVENT_NETWORK_DISCONNECTED);
                 break;
             case NetworkEvent::WifiConfigModeEnter:
-                // WiFi config mode enter is handled by WifiBoard internally
+                // 进入配网模式的细节由 WifiBoard 内部处理。
                 break;
             case NetworkEvent::WifiConfigModeExit:
-                // WiFi config mode exit is handled by WifiBoard internally
+                // 退出配网模式后的重连逻辑由 WifiBoard 内部处理。
                 break;
-            // Cellular modem specific events
+            // 蜂窝模组相关事件。
             case NetworkEvent::ModemDetecting:
                 display->SetStatus(Lang::Strings::DETECTING_MODULE);
                 break;
@@ -155,15 +155,15 @@ void Application::Initialize() {
         }
     });
 
-    // Start network asynchronously
+    // 异步启动网络流程，不阻塞主线程。
     board.StartNetwork();
 
-    // Update the status bar immediately to show the network state
+    // 立即刷新一次状态栏，尽快展示当前网络状态。
     display->UpdateStatusBar(true);
 }
 
 void Application::Run() {
-    // Set the priority of the main task to 10
+    // 提高主任务优先级，确保 UI/状态处理更及时。
     vTaskPrioritySet(nullptr, 10);
 
     const EventBits_t ALL_EVENTS = 
@@ -250,7 +250,7 @@ void Application::Run() {
             auto display = Board::GetInstance().GetDisplay();
             display->UpdateStatusBar();
         
-            // Print debug info every 10 seconds
+            // 每 10 秒打印一次堆内存调试信息。
             if (clock_ticks_ % 10 == 0) {
                 SystemInfo::PrintHeapStats();
             }
@@ -263,7 +263,7 @@ void Application::HandleNetworkConnectedEvent() {
     auto state = GetDeviceState();
 
     if (state == kDeviceStateStarting || state == kDeviceStateWifiConfiguring) {
-        // Network is ready, start activation
+        // 网络就绪后启动激活流程，包括 OTA/资源/协议初始化。
         SetDeviceState(kDeviceStateActivating);
         if (activation_task_handle_ != nullptr) {
             ESP_LOGW(TAG, "Activation task already running");
@@ -278,20 +278,20 @@ void Application::HandleNetworkConnectedEvent() {
         }, "activation", 4096 * 2, this, 2, &activation_task_handle_);
     }
 
-    // Update the status bar immediately to show the network state
+    // 联网完成后立刻刷新状态栏。
     auto display = Board::GetInstance().GetDisplay();
     display->UpdateStatusBar(true);
 }
 
 void Application::HandleNetworkDisconnectedEvent() {
-    // Close current conversation when network disconnected
+    // 网络断开时，主动关闭当前会话对应的音频通道。
     auto state = GetDeviceState();
     if (state == kDeviceStateConnecting || state == kDeviceStateListening || state == kDeviceStateSpeaking) {
         ESP_LOGI(TAG, "Closing audio channel due to network disconnection");
         protocol_->CloseAudioChannel();
     }
 
-    // Update the status bar immediately to show the network state
+    // 网络断开后立刻刷新状态栏。
     auto display = Board::GetInstance().GetDisplay();
     display->UpdateStatusBar(true);
 }
@@ -309,36 +309,36 @@ void Application::HandleActivationDoneEvent() {
     display->ShowNotification(message.c_str());
     display->SetChatMessage("system", "");
 
-    // Release OTA object after activation is complete
+    // 激活完成后释放 OTA 对象，回收资源。
     ota_.reset();
     auto& board = Board::GetInstance();
     board.SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
 
     Schedule([this]() {
-        // Play the success sound to indicate the device is ready
+        // 播放成功提示音，表示设备已可正常使用。
         audio_service_.PlaySound(Lang::Sounds::OGG_SUCCESS);
     });
 }
 
 void Application::ActivationTask() {
-    // Create OTA object for activation process
+    // 创建 OTA 对象，供激活阶段统一使用。
     ota_ = std::make_unique<Ota>();
 
-    // Check for new assets version
+    // 检查资源包版本。
     CheckAssetsVersion();
 
-    // Check for new firmware version
+    // 检查固件版本。
     CheckNewVersion();
 
-    // Initialize the protocol
+    // 初始化通信协议。
     InitializeProtocol();
 
-    // Signal completion to main loop
+    // 通知主循环：激活阶段已完成。
     xEventGroupSetBits(event_group_, MAIN_EVENT_ACTIVATION_DONE);
 }
 
 void Application::CheckAssetsVersion() {
-    // Only allow CheckAssetsVersion to be called once
+    // 资源版本检查只允许执行一次。
     if (assets_version_checked_) {
         return;
     }
@@ -354,7 +354,7 @@ void Application::CheckAssetsVersion() {
     }
     
     Settings settings("assets", true);
-    // Check if there is a new assets need to be downloaded
+    // 检查是否有待下载的新资源包。
     std::string download_url = settings.GetString("download_url");
 
     if (!download_url.empty()) {
@@ -364,7 +364,7 @@ void Application::CheckAssetsVersion() {
         snprintf(message, sizeof(message), Lang::Strings::FOUND_NEW_ASSETS, download_url.c_str());
         Alert(Lang::Strings::LOADING_ASSETS, message, "cloud_arrow_down", Lang::Sounds::OGG_UPGRADE);
         
-        // Wait for the audio service to be idle for 3 seconds
+        // 等待音频服务空闲，避免升级提示音与下载过程相互干扰。
         vTaskDelay(pdMS_TO_TICKS(3000));
         SetDeviceState(kDeviceStateUpgrading);
         board.SetPowerSaveLevel(PowerSaveLevel::PERFORMANCE);
@@ -389,7 +389,7 @@ void Application::CheckAssetsVersion() {
         }
     }
 
-    // Apply assets
+    // 应用已经下载好的资源包。
     assets.Apply();
     display->SetChatMessage("system", "");
     display->SetEmotion("microchip_ai");
@@ -398,7 +398,7 @@ void Application::CheckAssetsVersion() {
 void Application::CheckNewVersion() {
     const int MAX_RETRY = 10;
     int retry_count = 0;
-    int retry_delay = 10; // Initial retry delay in seconds
+    int retry_delay = 10; // 初始重试间隔，单位为秒。
 
     auto& board = Board::GetInstance();
     while (true) {
@@ -426,33 +426,33 @@ void Application::CheckNewVersion() {
                     break;
                 }
             }
-            retry_delay *= 2; // Double the retry delay
+            retry_delay *= 2; // 每次失败后指数退避。
             continue;
         }
         retry_count = 0;
-        retry_delay = 10; // Reset retry delay
+        retry_delay = 10; // 成功后恢复初始重试间隔。
 
         if (ota_->HasNewVersion()) {
             if (UpgradeFirmware(ota_->GetFirmwareUrl(), ota_->GetFirmwareVersion())) {
-                return; // This line will never be reached after reboot
+                return; // 升级成功后设备会重启，这里理论上不会继续执行。
             }
-            // If upgrade failed, continue to normal operation
+            // 升级失败则继续走正常启动流程。
         }
 
-        // No new version, mark the current version as valid
+        // 没有新版本时，将当前固件标记为有效版本。
         ota_->MarkCurrentVersionValid();
         if (!ota_->HasActivationCode() && !ota_->HasActivationChallenge()) {
-            // Exit the loop if done checking new version
+            // 既无升级也无需激活时，结束版本检查流程。
             break;
         }
 
         display->SetStatus(Lang::Strings::ACTIVATION);
-        // Activation code is shown to the user and waiting for the user to input
+        // 显示激活码，等待用户完成激活。
         if (ota_->HasActivationCode()) {
             ShowActivationCode(ota_->GetActivationCode(), ota_->GetActivationMessage());
         }
 
-        // This will block the loop until the activation is done or timeout
+        // 这里会循环等待激活完成，直到成功或超时。
         for (int i = 0; i < 10; ++i) {
             ESP_LOGI(TAG, "Activating... %d/%d", i + 1, 10);
             esp_err_t err = ota_->Activate();
@@ -519,7 +519,7 @@ void Application::InitializeProtocol() {
     });
     
     protocol_->OnIncomingJson([this, display](const cJSON* root) {
-        // Parse JSON data
+        // 解析服务端下发的 JSON 消息。
         auto type = cJSON_GetObjectItem(root, "type");
         if (strcmp(type->valuestring, "tts") == 0) {
             auto state = cJSON_GetObjectItem(root, "state");
@@ -572,7 +572,7 @@ void Application::InitializeProtocol() {
             if (cJSON_IsString(command)) {
                 ESP_LOGI(TAG, "System command: %s", command->valuestring);
                 if (strcmp(command->valuestring, "reboot") == 0) {
-                    // Do a reboot if user requests a OTA update
+                    // 收到重启指令后，在主线程中执行重启。
                     Schedule([this]() {
                         Reboot();
                     });
@@ -627,7 +627,7 @@ void Application::ShowActivationCode(const std::string& code, const std::string&
         digit_sound{'9', Lang::Sounds::OGG_9}
     }};
 
-    // This sentence uses 9KB of SRAM, so we need to wait for it to finish
+    // 这段语音会占用较多 SRAM，因此在后续播报数字前先等待它播放完成。
     Alert(Lang::Strings::ACTIVATION, message.c_str(), "link", Lang::Sounds::OGG_ACTIVATION);
 
     for (const auto& digit : code) {
@@ -696,7 +696,7 @@ void Application::HandleToggleChatEvent() {
         ListeningMode mode = GetDefaultListeningMode();
         if (!protocol_->IsAudioChannelOpened()) {
             SetDeviceState(kDeviceStateConnecting);
-            // Schedule to let the state change be processed first (UI update)
+            // 先让 UI 完成状态切换，再异步打开音频通道。
             Schedule([this, mode]() {
                 ContinueOpenAudioChannel(mode);
             });
@@ -711,7 +711,7 @@ void Application::HandleToggleChatEvent() {
 }
 
 void Application::ContinueOpenAudioChannel(ListeningMode mode) {
-    // Check state again in case it was changed during scheduling
+    // 重新确认状态，避免排队期间状态已被其他事件改变。
     if (GetDeviceState() != kDeviceStateConnecting) {
         return;
     }
@@ -745,7 +745,7 @@ void Application::HandleStartListeningEvent() {
     if (state == kDeviceStateIdle) {
         if (!protocol_->IsAudioChannelOpened()) {
             SetDeviceState(kDeviceStateConnecting);
-            // Schedule to let the state change be processed first (UI update)
+            // 先让 UI 完成状态切换，再异步打开音频通道。
             Schedule([this]() {
                 ContinueOpenAudioChannel(kListeningModeManualStop);
             });
@@ -1116,4 +1116,3 @@ void Application::ResetProtocol() {
         protocol_.reset();
     });
 }
-
