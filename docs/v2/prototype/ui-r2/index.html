@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>小智AI智能助手 - UI原型预览 R2</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            background: #f0f2f5;
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: flex-start;
+            padding: 40px 20px;
+            font-family: 'PingFang SC', 'Microsoft YaHei', sans-serif;
+        }
+        .container {
+            max-width: 800px;
+            width: 100%;
+        }
+        .page-header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .page-header h1 {
+            font-size: 24px;
+            color: #333;
+            margin-bottom: 5px;
+        }
+        .page-header p {
+            font-size: 13px;
+            color: #666;
+        }
+        .version-badge {
+            display: inline-block;
+            margin-top: 10px;
+            padding: 4px 10px;
+            border-radius: 999px;
+            background: #111;
+            color: #fff;
+            font-size: 11px;
+        }
+        .section {
+            margin-bottom: 30px;
+        }
+        .section-title {
+            font-size: 14px;
+            color: #999;
+            margin-bottom: 12px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        .card-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+            gap: 15px;
+        }
+        .card {
+            background: #fff;
+            border-radius: 12px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+            overflow: hidden;
+            transition: all 0.2s;
+            text-decoration: none;
+            display: block;
+        }
+        .card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 20px rgba(0,0,0,0.12);
+        }
+        .card-preview {
+            background: #333;
+            padding: 8px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        .card-preview iframe {
+            border: none;
+            width: 200px;
+            height: 150px;
+            background: #fff;
+            border: 1px solid #000;
+        }
+        .card-info {
+            padding: 12px;
+        }
+        .card-name {
+            font-size: 13px;
+            font-weight: 500;
+            color: #333;
+            margin-bottom: 3px;
+        }
+        .card-desc {
+            font-size: 11px;
+            color: #999;
+        }
+        .card-tag {
+            display: inline-block;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 10px;
+            margin-top: 5px;
+        }
+        .tag-device {
+            background: #e8f4ff;
+            color: #0072ff;
+        }
+        .tag-web {
+            background: #fff3e0;
+            color: #e65100;
+        }
+        .tag-r2 {
+            background: #111;
+            color: #fff;
+        }
+        .tag-base {
+            background: #f0f0f0;
+            color: #666;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="page-header">
+            <h1>小智AI智能助手 - UI原型 R2</h1>
+            <p>ESP32-S3-RLCD-4.2 (400x300) 二开确认版原型目录</p>
+            <div class="version-badge">方案 B：保留旧原型，单独维护 ui-r2</div>
+            <p style="margin-top:8px;color:#e65100;font-size:12px">
+                <strong>当前状态：</strong>本目录已复制旧版原型作为基线，<strong>setup-start</strong> 与 <strong>device-activation</strong> 已按二开规则修订；<br>
+                其他页面当前仍保留旧版样式，后续将按确认顺序逐页修订。<br>
+                首次配网页顶部不显示 WiFi，只保留温湿度与电池/充电状态。
+            </p>
+        </div>
+
+        <div class="section">
+            <div class="section-title">设备屏幕页面 (单色 400x300)</div>
+            <div class="card-grid">
+                <a href="setup-start.html" class="card">
+                    <div class="card-preview">
+                        <iframe src="setup-start.html"></iframe>
+                    </div>
+                    <div class="card-info">
+                        <div class="card-name">首次启动</div>
+                        <div class="card-desc">setup-start.html</div>
+                        <span class="card-tag tag-device">设备屏幕</span>
+                        <span class="card-tag tag-r2">已修订</span>
+                    </div>
+                </a>
+                <a href="device-home.html" class="card">
+                    <div class="card-preview">
+                        <iframe src="device-home.html"></iframe>
+                    </div>
+                    <div class="card-info">
+                        <div class="card-name">主页</div>
+                        <div class="card-desc">device-home.html</div>
+                        <span class="card-tag tag-device">设备屏幕</span>
+                        <span class="card-tag tag-base">基线待修订</span>
+                    </div>
+                </a>
+                <a href="device-activation.html" class="card">
+                    <div class="card-preview">
+                        <iframe src="device-activation.html"></iframe>
+                    </div>
+                    <div class="card-info">
+                        <div class="card-name">激活小智</div>
+                        <div class="card-desc">device-activation.html</div>
+                        <span class="card-tag tag-device">设备屏幕</span>
+                        <span class="card-tag tag-r2">已修订</span>
+                    </div>
+                </a>
+
+                <a href="device-music.html" class="card">
+                    <div class="card-preview">
+                        <iframe src="device-music.html"></iframe>
+                    </div>
+                    <div class="card-info">
+                        <div class="card-name">音乐播放器</div>
+                        <div class="card-desc">device-music.html</div>
+                        <span class="card-tag tag-device">设备屏幕</span>
+                        <span class="card-tag tag-base">基线待修订</span>
+                    </div>
+                </a>
+                <a href="device-schedule.html" class="card">
+                    <div class="card-preview">
+                        <iframe src="device-schedule.html"></iframe>
+                    </div>
+                    <div class="card-info">
+                        <div class="card-name">课程表</div>
+                        <div class="card-desc">device-schedule.html</div>
+                        <span class="card-tag tag-device">设备屏幕</span>
+                        <span class="card-tag tag-base">基线待修订</span>
+                    </div>
+                </a>
+                <a href="device-weather.html" class="card">
+                    <div class="card-preview">
+                        <iframe src="device-weather.html"></iframe>
+                    </div>
+                    <div class="card-info">
+                        <div class="card-name">天气详情</div>
+                        <div class="card-desc">device-weather.html</div>
+                        <span class="card-tag tag-device">设备屏幕</span>
+                        <span class="card-tag tag-base">基线待修订</span>
+                    </div>
+                </a>
+            </div>
+        </div>
+
+        <div class="section">
+            <div class="section-title">浏览器配置页面 (彩色)</div>
+            <div class="card-grid">
+                <a href="setup-wifi.html" class="card">
+                    <div class="card-preview" style="background:#667eea;">
+                        <iframe src="setup-wifi.html"></iframe>
+                    </div>
+                    <div class="card-info">
+                        <div class="card-name">WiFi配置</div>
+                        <div class="card-desc">setup-wifi.html</div>
+                        <span class="card-tag tag-web">浏览器</span>
+                        <span class="card-tag tag-base">基线待修订</span>
+                    </div>
+                </a>
+                <a href="setup-schedule.html" class="card">
+                    <div class="card-preview" style="background:#11998e;">
+                        <iframe src="setup-schedule.html"></iframe>
+                    </div>
+                    <div class="card-info">
+                        <div class="card-name">课程表配置</div>
+                        <div class="card-desc">setup-schedule.html</div>
+                        <span class="card-tag tag-web">浏览器</span>
+                        <span class="card-tag tag-base">基线待修订</span>
+                    </div>
+                </a>
+                <a href="setup-weather.html" class="card">
+                    <div class="card-preview" style="background:#ee0979;">
+                        <iframe src="setup-weather.html"></iframe>
+                    </div>
+                    <div class="card-info">
+                        <div class="card-name">天气API配置</div>
+                        <div class="card-desc">setup-weather.html</div>
+                        <span class="card-tag tag-web">浏览器</span>
+                        <span class="card-tag tag-base">基线待修订</span>
+                    </div>
+                </a>
+                <a href="setup-done.html" class="card">
+                    <div class="card-preview" style="background:#0072ff;">
+                        <iframe src="setup-done.html"></iframe>
+                    </div>
+                    <div class="card-info">
+                        <div class="card-name">完成页</div>
+                        <div class="card-desc">setup-done.html</div>
+                        <span class="card-tag tag-web">浏览器</span>
+                        <span class="card-tag tag-base">基线待修订</span>
+                    </div>
+                </a>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

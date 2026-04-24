@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>激活小智</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            background: #ececec;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            font-family: 'PingFang SC', 'Microsoft YaHei', sans-serif;
+        }
+        .device-frame {
+            background: #333;
+            border-radius: 12px;
+            padding: 12px;
+            box-shadow: 0 8px 20px rgba(0,0,0,0.3);
+        }
+        .screen {
+            width: 400px;
+            height: 300px;
+            background: #fff;
+            border: 2px solid #000;
+            overflow: hidden;
+            position: relative;
+        }
+        .content {
+            width: 400px;
+            height: 300px;
+            display: flex;
+            flex-direction: column;
+        }
+        .top-bar {
+            height: 28px;
+            border-bottom: 1px solid #000;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 10px;
+            font-size: 11px;
+            flex-shrink: 0;
+        }
+        .top-left,
+        .top-right {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .main-area {
+            flex: 1;
+            padding: 10px 16px 6px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            text-align: center;
+            justify-content: flex-start;
+        }
+        .icon-area {
+            font-size: 26px;
+            margin-bottom: 4px;
+        }
+        .title {
+            font-size: 17px;
+            font-weight: 700;
+            letter-spacing: 1px;
+            margin-bottom: 6px;
+        }
+        .sub-title {
+            font-size: 11px;
+            line-height: 1.45;
+            margin-bottom: 8px;
+        }
+        .code-box {
+            width: 100%;
+            border: 2px solid #000;
+            padding: 8px 10px;
+            margin-bottom: 8px;
+        }
+        .code-label {
+            font-size: 11px;
+            margin-bottom: 4px;
+        }
+        .code-value {
+            font-size: 24px;
+            font-weight: 700;
+            letter-spacing: 1px;
+            line-height: 1.2;
+        }
+        .steps-box {
+            width: 100%;
+            border: 1px solid #000;
+            padding: 7px 9px;
+            text-align: left;
+            font-size: 10px;
+            line-height: 1.55;
+        }
+        .steps-box strong {
+            display: block;
+            margin-bottom: 2px;
+        }
+        .footer {
+            height: 22px;
+            border-top: 1px solid #000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            font-size: 10px;
+            flex-shrink: 0;
+            padding: 0 8px;
+        }
+        .dot {
+            width: 7px;
+            height: 7px;
+            background: #000;
+            border-radius: 50%;
+            animation: blink 1.4s infinite;
+        }
+        @keyframes blink {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.2; }
+        }
+    </style>
+</head>
+<body>
+    <div class="device-frame">
+        <div class="screen">
+            <div class="content">
+                <div class="top-bar">
+                    <div class="top-left">
+                        <span>12:33</span>
+                        <span>22°C</span>
+                        <span>65%</span>
+                    </div>
+                    <div class="top-right">
+                        <span><i class="fas fa-wifi"></i></span>
+                        <span><i class="fas fa-battery-three-quarters"></i> 85%</span>
+                    </div>
+                </div>
+
+                <div class="main-area">
+                    <div class="icon-area"><i class="fas fa-link"></i></div>
+                    <div class="title">激活小智</div>
+                    <div class="sub-title">请在小智控制台输入下方号码，完成设备绑定</div>
+
+                    <div class="code-box">
+                        <div class="code-label">小智号码</div>
+                        <div class="code-value">XZ-2038</div>
+                    </div>
+
+                    <div class="steps-box">
+                        <strong>操作提示</strong>
+                        1. 打开小智控制台<br>
+                        2. 选择“添加设备”<br>
+                        3. 输入上方小智号码
+                    </div>
+                </div>
+
+                <div class="footer">
+                    <span class="dot"></span>
+                    <span>等待绑定完成后自动进入主页</span>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
