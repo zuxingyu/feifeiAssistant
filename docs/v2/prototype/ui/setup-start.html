@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>首次启动</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            background: #f0f0f0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            font-family: 'Courier New', monospace;
+        }
+        .device-frame {
+            background: #333;
+            border-radius: 12px;
+            padding: 12px;
+            box-shadow: 0 8px 20px rgba(0,0,0,0.3);
+        }
+        .screen {
+            width: 400px;
+            height: 300px;
+            background: #fff;
+            border: 2px solid #000;
+            overflow: hidden;
+            position: relative;
+        }
+        .content {
+            width: 400px;
+            height: 300px;
+            display: flex;
+            flex-direction: column;
+        }
+        /* 顶部状态栏 */
+        .top-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 4px 8px;
+            border-bottom: 1px solid #000;
+            font-size: 11px;
+            flex-shrink: 0;
+            height: 28px;
+        }
+        .top-left { display: flex; gap: 5px; align-items: center; }
+        .top-right { display: flex; gap: 5px; align-items: center; }
+        /* 主内容区 */
+        .main-area {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            text-align: center;
+            padding: 0 20px;
+        }
+        .setup-icon {
+            font-size: 36px;
+            margin-bottom: 10px;
+        }
+        .setup-title {
+            font-size: 16px;
+            font-weight: bold;
+            margin-bottom: 16px;
+        }
+        .wifi-box {
+            border: 2px solid #000;
+            padding: 10px 24px;
+            margin-bottom: 10px;
+            text-align: center;
+        }
+        .wifi-label { font-size: 11px; margin-bottom: 3px; }
+        .wifi-name { font-size: 15px; font-weight: bold; letter-spacing: 1px; }
+        .ip-box {
+            border: 2px solid #000;
+            padding: 10px 24px;
+            margin-bottom: 14px;
+            text-align: center;
+        }
+        .ip-label { font-size: 11px; margin-bottom: 3px; }
+        .ip-address { font-size: 15px; font-weight: bold; }
+        .hint-text {
+            font-size: 12px;
+            line-height: 1.7;
+        }
+        /* 底部等待提示 */
+        .footer {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 5px 0;
+            font-size: 11px;
+            border-top: 1px solid #000;
+            flex-shrink: 0;
+        }
+        .footer .dot {
+            display: inline-block;
+            width: 7px;
+            height: 7px;
+            background: #000;
+            border-radius: 50%;
+            margin-right: 7px;
+            animation: blink 1.5s infinite;
+        }
+        @keyframes blink {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0; }
+        }
+    </style>
+</head>
+<body>
+    <div class="device-frame">
+        <div class="screen">
+            <div class="content">
+                <!-- 顶部状态栏 -->
+                <div class="top-bar">
+                    <div class="top-left">
+                        <span>22°C</span>
+                        <span>65%</span>
+                    </div>
+                    <div class="top-right">
+                        <span><i class="fas fa-battery-three-quarters"></i> 85%</span>
+                    </div>
+                </div>
+
+                <!-- 主内容区 -->
+                <div class="main-area">
+                    <div class="setup-icon"><i class="fas fa-wifi"></i></div>
+                    <div class="setup-title">首次启动配置</div>
+
+                    <div class="wifi-box">
+                        <div class="wifi-label">WiFi名称</div>
+                        <div class="wifi-name">XIAOZHI_SETUP</div>
+                    </div>
+
+                    <div class="ip-box">
+                        <div class="ip-label">IP地址</div>
+                        <div class="ip-address">192.168.4.1</div>
+                    </div>
+
+                    <div class="hint-text">
+                        请连接此WiFi后<br>
+                        在浏览器中打开上述IP
+                    </div>
+                </div>
+
+                <!-- 底部等待提示 -->
+                <div class="footer">
+                    <span class="dot"></span>
+                    等待配置...
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>主页</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            background: #f0f0f0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            font-family: 'Courier New', monospace;
+        }
+        .device-frame {
+            background: #333;
+            border-radius: 12px;
+            padding: 12px;
+            box-shadow: 0 8px 20px rgba(0,0,0,0.3);
+        }
+        .screen {
+            width: 400px;
+            height: 300px;
+            background: #fff;
+            border: 2px solid #000;
+            overflow: hidden;
+            position: relative;
+        }
+        .content {
+            width: 400px;
+            height: 300px;
+            display: flex;
+            flex-direction: column;
+        }
+        /* 顶部状态栏 */
+        .top-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 4px 8px;
+            border-bottom: 1px solid #000;
+            font-size: 11px;
+            flex-shrink: 0;
+            height: 28px;
+        }
+        .top-left { display: flex; gap: 5px; align-items: center; }
+        .top-right { display: flex; gap: 5px; align-items: center; }
+        /* 大时间条 */
+        .time-strip {
+            display: flex;
+            align-items: baseline;
+            padding: 3px 8px 2px 8px;
+            border-bottom: 1px solid #000;
+            flex-shrink: 0;
+        }
+        .date-big { font-size: 12px; margin-right: 6px; }
+        .clock-big { font-size: 26px; font-weight: bold; line-height: 1.1; letter-spacing: 1px; }
+        /* 3日天气 */
+        .weather-strip {
+            display: flex;
+            border-bottom: 1px solid #000;
+            flex-shrink: 0;
+        }
+        .weather-col {
+            flex: 1;
+            text-align: center;
+            padding: 4px 2px;
+            border-right: 1px solid #000;
+        }
+        .weather-col:last-child { border-right: none; }
+        .w-day { font-size: 10px; font-weight: bold; }
+        .w-icon { font-size: 14px; margin: 2px 0; }
+        .w-temp { font-size: 12px; }
+        .w-desc { font-size: 9px; }
+        /* 课程区 */
+        .course-section {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            padding: 2px 8px;
+            overflow: hidden;
+        }
+        .course-block { flex: 1; display: flex; flex-direction: column; }
+        .course-block-title {
+            font-size: 10px;
+            font-weight: bold;
+            margin-bottom: 1px;
+        }
+        .course-row {
+            display: flex;
+            align-items: center;
+            font-size: 11px;
+            margin-bottom: 0;
+        }
+        .course-row-label {
+            width: 16px;
+            font-weight: bold;
+            font-size: 10px;
+        }
+        .course-periods { display: flex; gap: 3px; }
+        .course-period {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-width: 20px;
+        }
+        .course-period-num { font-size: 9px; color: #555; }
+        .course-period-name { font-size: 11px; font-weight: bold; }
+        /* 课程分隔线 */
+        .course-divider {
+            height: 1px;
+            background: #000;
+            margin: 1px 0;
+            flex-shrink: 0;
+        }
+        /* 周末愉快 */
+        .weekend-happy {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex: 1;
+            gap: 8px;
+        }
+        .weekend-happy-text {
+            font-size: 14px;
+            font-weight: bold;
+        }
+        .weekend-happy-face {
+            font-size: 22px;
+            font-weight: bold;
+        }
+        /* 聊天区 */
+        .chat-strip {
+            border-top: 1px solid #000;
+            padding: 3px 8px;
+            font-size: 10px;
+            height: 24px;
+            overflow: hidden;
+            display: flex;
+            align-items: center;
+            flex-shrink: 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="device-frame">
+        <div class="screen">
+            <div class="content">
+                <!-- 顶部状态栏 -->
+                <div class="top-bar">
+                    <div class="top-left">
+                        <span>12:33</span>
+                        <span>22°C</span>
+                        <span>65%</span>
+                    </div>
+                    <div class="top-right">
+                        <span><i class="fas fa-wifi"></i></span>
+                        <span><i class="fas fa-battery-three-quarters"></i> 85%</span>
+                    </div>
+                </div>
+
+                <!-- 大时间 -->
+                <div class="time-strip">
+                    <span class="date-big">1月4日 周六</span>
+                    <span class="clock-big">12:33</span>
+                </div>
+
+                <!-- 3日天气 -->
+                <div class="weather-strip">
+                    <div class="weather-col">
+                        <div class="w-day">今天</div>
+                        <div class="w-icon"><i class="fas fa-sun"></i></div>
+                        <div class="w-temp">18/12°C</div>
+                        <div class="w-desc">晴</div>
+                    </div>
+                    <div class="weather-col">
+                        <div class="w-day">明天</div>
+                        <div class="w-icon"><i class="fas fa-cloud-sun"></i></div>
+                        <div class="w-temp">20/13°C</div>
+                        <div class="w-desc">多云</div>
+                    </div>
+                    <div class="weather-col">
+                        <div class="w-day">后天</div>
+                        <div class="w-icon"><i class="fas fa-cloud"></i></div>
+                        <div class="w-temp">19/11°C</div>
+                        <div class="w-desc">阴</div>
+                    </div>
+                </div>
+
+                <!-- 课程区（周末/工作日共用此区域，由固件动态切换内容） -->
+                <div class="course-section">
+                    <!-- 今日内容（固件根据星期几自动切换：周末显示周末愉快，工作日显示课程） -->
+                    <div class="course-block">
+                        <div class="course-block-title">今日课程</div>
+                        <div class="weekend-happy">
+                            <span class="weekend-happy-text">周末愉快!</span>
+                            <span class="weekend-happy-face">:-D</span>
+                        </div>
+                    </div>
+
+                    <!-- 分隔线 -->
+                    <div class="course-divider"></div>
+
+                    <!-- 明日内容（固件根据星期几自动切换：周日显示休息，周一显示课程） -->
+                    <div class="course-block">
+                        <div class="course-block-title">明日课程</div>
+                        <div class="weekend-happy">
+                            <span class="weekend-happy-text">好好休息</span>
+                            <span class="weekend-happy-face">^_^</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 聊天 -->
+                <div class="chat-strip">
+                    小智: 周末愉快,好好放松哦!
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
