@@ -729,11 +729,15 @@ if(MANUFACTURER)
     file(GLOB BOARD_SOURCES
         ${CMAKE_CURRENT_SOURCE_DIR}/boards/${MANUFACTURER}/${BOARD_TYPE}/*.cc
         ${CMAKE_CURRENT_SOURCE_DIR}/boards/${MANUFACTURER}/${BOARD_TYPE}/*.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/boards/${MANUFACTURER}/${BOARD_TYPE}/assets/fonts/*.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/boards/${MANUFACTURER}/${BOARD_TYPE}/assets/icons/*.c
     )
 else()
     file(GLOB BOARD_SOURCES
         ${CMAKE_CURRENT_SOURCE_DIR}/boards/${BOARD_TYPE}/*.cc
         ${CMAKE_CURRENT_SOURCE_DIR}/boards/${BOARD_TYPE}/*.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/boards/${BOARD_TYPE}/assets/fonts/*.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/boards/${BOARD_TYPE}/assets/icons/*.c
     )
 endif()
 list(APPEND SOURCES ${BOARD_SOURCES})
