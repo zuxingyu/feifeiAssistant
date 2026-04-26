@@ -1,7 +1,10 @@
 #include <esp_lcd_panel_vendor.h>
 #include <driver/i2c_master.h>
 #include <driver/spi_common.h>
+#include <driver/temperature_sensor.h>
 #include <esp_log.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 #include "custom_lcd_display.h"
 #include "wifi_board.h"
 #include "application.h"
@@ -15,14 +18,33 @@
 
 #define TAG "waveshare_rlcd_4_2"
 
+static temperature_sensor_handle_t temp_sensor = NULL;
+
 class CustomBoard : public WifiBoard {
 private:
+    enum class EnvSensorType {
+        None,
+        Sht3x,
+        Sht4x,
+        Shtc3,
+        Hdc1080,
+        Si7021,
+        Aht2x
+    };
+
     i2c_master_bus_handle_t i2c_bus_;
     Button boot_button_;
     CustomLcdDisplay *display_;
     adc_oneshot_unit_handle_t adc1_handle;
     adc_cali_handle_t cali_handle;
     bool vbat_status = 0;
+    EnvSensorType env_sensor_type_ = EnvSensorType::None;
+    i2c_master_dev_handle_t env_sensor_dev_ = nullptr;
+    uint8_t env_sensor_addr_ = 0;
+    TickType_t env_cache_tick_ = 0;
+    bool env_cache_ok_ = false;
+    float env_cache_temp_c_ = 0.0f;
+    float env_cache_humidity_ = 0.0f;
 
     void InitializeI2c() {
         // 初始化音频编解码器使用的 I2C 主总线。
@@ -36,6 +58,292 @@ private:
         i2c_bus_cfg.trans_queue_depth = 0;
         i2c_bus_cfg.flags.enable_internal_pullup = 1;
         ESP_ERROR_CHECK(i2c_new_master_bus(&i2c_bus_cfg, &i2c_bus_));
+
+        if (temp_sensor == NULL) {
+            temperature_sensor_config_t temp_sensor_config = TEMPERATURE_SENSOR_CONFIG_DEFAULT(10, 50);
+            ESP_ERROR_CHECK(temperature_sensor_install(&temp_sensor_config, &temp_sensor));
+            ESP_ERROR_CHECK(temperature_sensor_enable(temp_sensor));
+        }
+    }
+
+    void InitializeEnvSensor() {
+        constexpr uint8_t kShtc3Addr = 0x70;
+        if (i2c_master_probe(i2c_bus_, kShtc3Addr, pdMS_TO_TICKS(100)) != ESP_OK) {
+            env_sensor_type_ = EnvSensorType::None;
+            env_sensor_dev_ = nullptr;
+            env_sensor_addr_ = 0;
+            ESP_LOGW(TAG, "SHTC3 not found on I2C (0x70)");
+            return;
+        }
+
+        i2c_device_config_t dev_cfg = {
+            .dev_addr_length = I2C_ADDR_BIT_LEN_7,
+            .device_address = kShtc3Addr,
+            .scl_speed_hz = 100 * 1000,
+            .scl_wait_us = 0,
+            .flags = {
+                .disable_ack_check = 0,
+            },
+        };
+        if (i2c_master_bus_add_device(i2c_bus_, &dev_cfg, &env_sensor_dev_) != ESP_OK) {
+            env_sensor_type_ = EnvSensorType::None;
+            env_sensor_dev_ = nullptr;
+            env_sensor_addr_ = 0;
+            ESP_LOGW(TAG, "SHTC3 add I2C device failed");
+            return;
+        }
+
+        env_sensor_type_ = EnvSensorType::Shtc3;
+        env_sensor_addr_ = kShtc3Addr;
+
+        float t = 0.0f;
+        float h = 0.0f;
+        if (!ReadEnvFromShtc3(t, h)) {
+            ESP_LOGW(TAG, "SHTC3 init read failed");
+            i2c_master_bus_rm_device(env_sensor_dev_);
+            env_sensor_dev_ = nullptr;
+            env_sensor_type_ = EnvSensorType::None;
+            env_sensor_addr_ = 0;
+            return;
+        }
+
+        ESP_LOGI(TAG, "Env sensor detected: SHTC3 (0x%02x)", env_sensor_addr_);
+    }
+
+    bool ReadEnvFromSht3x(float& temp_c, float& humidity) {
+        if (env_sensor_dev_ == nullptr) {
+            return false;
+        }
+
+        uint8_t cmd[] = {0x24, 0x00};
+        if (i2c_master_transmit(env_sensor_dev_, cmd, sizeof(cmd), pdMS_TO_TICKS(100)) != ESP_OK) {
+            return false;
+        }
+        vTaskDelay(pdMS_TO_TICKS(20));
+
+        uint8_t buf[6] = {};
+        if (i2c_master_receive(env_sensor_dev_, buf, sizeof(buf), pdMS_TO_TICKS(100)) != ESP_OK) {
+            return false;
+        }
+
+        uint16_t raw_t = (static_cast<uint16_t>(buf[0]) << 8) | buf[1];
+        uint16_t raw_rh = (static_cast<uint16_t>(buf[3]) << 8) | buf[4];
+
+        temp_c = -45.0f + 175.0f * (static_cast<float>(raw_t) / 65535.0f);
+        humidity = 100.0f * (static_cast<float>(raw_rh) / 65535.0f);
+        return true;
+    }
+
+    bool ReadEnvFromSht4x(float& temp_c, float& humidity) {
+        if (env_sensor_dev_ == nullptr) {
+            return false;
+        }
+
+        uint8_t cmd = 0xFD;
+        if (i2c_master_transmit(env_sensor_dev_, &cmd, 1, pdMS_TO_TICKS(100)) != ESP_OK) {
+            return false;
+        }
+        vTaskDelay(pdMS_TO_TICKS(10));
+
+        uint8_t buf[6] = {};
+        if (i2c_master_receive(env_sensor_dev_, buf, sizeof(buf), pdMS_TO_TICKS(100)) != ESP_OK) {
+            return false;
+        }
+
+        uint16_t raw_t = (static_cast<uint16_t>(buf[0]) << 8) | buf[1];
+        uint16_t raw_rh = (static_cast<uint16_t>(buf[3]) << 8) | buf[4];
+        temp_c = -45.0f + 175.0f * (static_cast<float>(raw_t) / 65535.0f);
+        humidity = -6.0f + 125.0f * (static_cast<float>(raw_rh) / 65535.0f);
+        if (humidity < 0.0f) humidity = 0.0f;
+        if (humidity > 100.0f) humidity = 100.0f;
+        return true;
+    }
+
+    bool ReadEnvFromShtc3(float& temp_c, float& humidity) {
+        if (env_sensor_dev_ == nullptr) {
+            return false;
+        }
+
+        auto crc8 = [](const uint8_t* data, size_t len) -> uint8_t {
+            uint8_t crc = 0xFF;
+            for (size_t i = 0; i < len; ++i) {
+                crc ^= data[i];
+                for (int bit = 0; bit < 8; ++bit) {
+                    crc = (crc & 0x80) ? static_cast<uint8_t>((crc << 1) ^ 0x31) : static_cast<uint8_t>(crc << 1);
+                }
+            }
+            return crc;
+        };
+
+        auto do_measure = [&](float& out_temp_c, float& out_humidity) -> bool {
+            uint8_t wake_cmd[] = {0x35, 0x17};
+            i2c_master_transmit(env_sensor_dev_, wake_cmd, sizeof(wake_cmd), pdMS_TO_TICKS(100));
+            vTaskDelay(pdMS_TO_TICKS(1));
+
+            uint8_t measure_cmd[] = {0x7C, 0xA2};
+            if (i2c_master_transmit(env_sensor_dev_, measure_cmd, sizeof(measure_cmd), pdMS_TO_TICKS(100)) != ESP_OK) {
+                return false;
+            }
+            vTaskDelay(pdMS_TO_TICKS(20));
+
+            uint8_t buf[6] = {};
+            if (i2c_master_receive(env_sensor_dev_, buf, sizeof(buf), pdMS_TO_TICKS(100)) != ESP_OK) {
+                return false;
+            }
+
+            if (crc8(buf, 2) != buf[2] || crc8(buf + 3, 2) != buf[5]) {
+                return false;
+            }
+
+            uint16_t raw_t = (static_cast<uint16_t>(buf[0]) << 8) | buf[1];
+            uint16_t raw_rh = (static_cast<uint16_t>(buf[3]) << 8) | buf[4];
+
+            out_temp_c = -45.0f + 175.0f * (static_cast<float>(raw_t) / 65536.0f);
+            out_humidity = 100.0f * (static_cast<float>(raw_rh) / 65536.0f);
+
+            uint8_t sleep_cmd[] = {0xB0, 0x98};
+            i2c_master_transmit(env_sensor_dev_, sleep_cmd, sizeof(sleep_cmd), pdMS_TO_TICKS(100));
+            return true;
+        };
+
+        float t = 0.0f;
+        float h = 0.0f;
+        if (!do_measure(t, h)) {
+            uint8_t reset_cmd[] = {0x80, 0x5D};
+            i2c_master_transmit(env_sensor_dev_, reset_cmd, sizeof(reset_cmd), pdMS_TO_TICKS(100));
+            vTaskDelay(pdMS_TO_TICKS(2));
+            if (!do_measure(t, h)) {
+                return false;
+            }
+        }
+
+        temp_c = t;
+        humidity = h;
+        return true;
+    }
+
+    bool ReadEnvFromHdc1080(float& temp_c, float& humidity) {
+        if (env_sensor_dev_ == nullptr) {
+            return false;
+        }
+
+        uint8_t reg = 0x00;
+        if (i2c_master_transmit(env_sensor_dev_, &reg, 1, pdMS_TO_TICKS(100)) != ESP_OK) {
+            return false;
+        }
+        vTaskDelay(pdMS_TO_TICKS(20));
+
+        uint8_t buf[4] = {};
+        if (i2c_master_receive(env_sensor_dev_, buf, sizeof(buf), pdMS_TO_TICKS(100)) != ESP_OK) {
+            return false;
+        }
+
+        uint16_t raw_t = (static_cast<uint16_t>(buf[0]) << 8) | buf[1];
+        uint16_t raw_rh = (static_cast<uint16_t>(buf[2]) << 8) | buf[3];
+
+        temp_c = (static_cast<float>(raw_t) / 65536.0f) * 165.0f - 40.0f;
+        humidity = (static_cast<float>(raw_rh) / 65536.0f) * 100.0f;
+        return true;
+    }
+
+    bool ReadEnvFromSi7021(float& temp_c, float& humidity) {
+        if (env_sensor_dev_ == nullptr) {
+            return false;
+        }
+
+        uint8_t cmd_h = 0xF5;
+        if (i2c_master_transmit(env_sensor_dev_, &cmd_h, 1, pdMS_TO_TICKS(100)) != ESP_OK) {
+            return false;
+        }
+        vTaskDelay(pdMS_TO_TICKS(30));
+
+        uint8_t rh_buf[3] = {};
+        if (i2c_master_receive(env_sensor_dev_, rh_buf, sizeof(rh_buf), pdMS_TO_TICKS(100)) != ESP_OK) {
+            return false;
+        }
+        uint16_t raw_rh = (static_cast<uint16_t>(rh_buf[0]) << 8) | rh_buf[1];
+        raw_rh &= 0xFFFC;
+        humidity = (125.0f * static_cast<float>(raw_rh) / 65536.0f) - 6.0f;
+        if (humidity < 0.0f) humidity = 0.0f;
+        if (humidity > 100.0f) humidity = 100.0f;
+
+        uint8_t cmd_t = 0xF3;
+        if (i2c_master_transmit(env_sensor_dev_, &cmd_t, 1, pdMS_TO_TICKS(100)) != ESP_OK) {
+            return false;
+        }
+        vTaskDelay(pdMS_TO_TICKS(20));
+
+        uint8_t t_buf[3] = {};
+        if (i2c_master_receive(env_sensor_dev_, t_buf, sizeof(t_buf), pdMS_TO_TICKS(100)) != ESP_OK) {
+            return false;
+        }
+        uint16_t raw_t = (static_cast<uint16_t>(t_buf[0]) << 8) | t_buf[1];
+        raw_t &= 0xFFFC;
+        temp_c = (175.72f * static_cast<float>(raw_t) / 65536.0f) - 46.85f;
+        return true;
+    }
+
+    bool ReadEnvFromAht2x(float& temp_c, float& humidity) {
+        if (env_sensor_dev_ == nullptr) {
+            return false;
+        }
+
+        uint8_t measure_cmd[] = {0xAC, 0x33, 0x00};
+        if (i2c_master_transmit(env_sensor_dev_, measure_cmd, sizeof(measure_cmd), pdMS_TO_TICKS(100)) != ESP_OK) {
+            return false;
+        }
+        vTaskDelay(pdMS_TO_TICKS(90));
+
+        uint8_t data[6] = {};
+        if (i2c_master_receive(env_sensor_dev_, data, sizeof(data), pdMS_TO_TICKS(100)) != ESP_OK) {
+            return false;
+        }
+
+        uint32_t raw_h = (static_cast<uint32_t>(data[1]) << 16) | (static_cast<uint32_t>(data[2]) << 8) | data[3];
+        raw_h >>= 4;
+        uint32_t raw_t = (static_cast<uint32_t>(data[3] & 0x0F) << 16) | (static_cast<uint32_t>(data[4]) << 8) | data[5];
+
+        humidity = (static_cast<float>(raw_h) / 1048576.0f) * 100.0f;
+        temp_c = (static_cast<float>(raw_t) / 1048576.0f) * 200.0f - 50.0f;
+        return true;
+    }
+
+    bool ReadEnv(float& temp_c, float& humidity) {
+        switch (env_sensor_type_) {
+            case EnvSensorType::Sht3x:
+                return ReadEnvFromSht3x(temp_c, humidity);
+            case EnvSensorType::Sht4x:
+                return ReadEnvFromSht4x(temp_c, humidity);
+            case EnvSensorType::Shtc3:
+                return ReadEnvFromShtc3(temp_c, humidity);
+            case EnvSensorType::Hdc1080:
+                return ReadEnvFromHdc1080(temp_c, humidity);
+            case EnvSensorType::Si7021:
+                return ReadEnvFromSi7021(temp_c, humidity);
+            case EnvSensorType::Aht2x:
+                return ReadEnvFromAht2x(temp_c, humidity);
+            case EnvSensorType::None:
+            default:
+                return false;
+        }
+    }
+
+    bool RefreshEnvCache() {
+        constexpr TickType_t kCacheTtl = pdMS_TO_TICKS(900);
+        TickType_t now = xTaskGetTickCount();
+        if (env_cache_tick_ != 0 && (now - env_cache_tick_) < kCacheTtl) {
+            return env_cache_ok_;
+        }
+
+        env_cache_tick_ = now;
+        float t = 0.0f;
+        float h = 0.0f;
+        env_cache_ok_ = ReadEnv(t, h);
+        if (env_cache_ok_) {
+            env_cache_temp_c_ = t;
+            env_cache_humidity_ = h;
+        }
+        return env_cache_ok_;
     }
 
     void InitializeButtons() { 
@@ -142,6 +450,7 @@ public:
     CustomBoard() : boot_button_(BOOT_BUTTON_GPIO) {    
         // 构造阶段完成板级外设准备，供 Application::Initialize() 后续直接使用。
         InitializeI2c();  
+        InitializeEnvSensor();
         InitializeButtons();     
         InitializeTools();
         InitializeLcdDisplay();
@@ -173,6 +482,22 @@ public:
         discharging = !charging;
         level = (int)BatterygetPercent();
 
+        return true;
+    }
+
+    virtual bool GetTemperature(float& esp32temp) override {
+        if (!RefreshEnvCache()) {
+            return false;
+        }
+        esp32temp = env_cache_temp_c_;
+        return true;
+    }
+
+    virtual bool GetHumidity(float& humidity) override {
+        if (!RefreshEnvCache()) {
+            return false;
+        }
+        humidity = env_cache_humidity_;
         return true;
     }
 };

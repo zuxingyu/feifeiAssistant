@@ -4,6 +4,9 @@
 #include <driver/gpio.h>
 #include "lcd_display.h"
 
+struct _lv_timer_t;
+typedef struct _lv_timer_t lv_timer_t;
+
 enum ColorSelection {
     ColorBlack = 0,    
     ColorWhite = 0xff
@@ -20,6 +23,12 @@ typedef struct {
 
 class CustomLcdDisplay : public LcdDisplay {
 private:
+    enum class UiPage {
+        kBoot,
+        kWifiConfig,
+        kHome,
+    };
+
     esp_lcd_panel_io_handle_t io_handle = NULL;
     // 这两个成员当前未实际使用，先保留以兼容既有实现。
     uint32_t            i2c_data_pdMS_TICKS = 0;
@@ -47,6 +56,62 @@ private:
     void RLCD_Reset(void);
     static void Lvgl_flush_cb(lv_display_t * disp, const lv_area_t * area, uint8_t * color_p);
 
+
+private:
+    UiPage current_page_ = UiPage::kBoot;
+    std::string last_status_text_;
+    std::string last_message_text_;
+
+    lv_obj_t* boot_page_ = nullptr;
+    lv_obj_t* boot_logo_label_ = nullptr;
+
+    lv_obj_t* wifi_config_page_ = nullptr;
+    lv_obj_t* wifi_config_top_bar_ = nullptr;
+    lv_obj_t* wifi_config_temp_label_ = nullptr;
+    lv_obj_t* wifi_config_humidity_label_ = nullptr;
+    lv_obj_t* wifi_config_battery_label_ = nullptr;
+    lv_obj_t* wifi_config_title_label_ = nullptr;
+    lv_obj_t* wifi_config_desc_label_ = nullptr;
+    lv_obj_t* wifi_config_ssid_card_ = nullptr;
+    lv_obj_t* wifi_config_ssid_caption_label_ = nullptr;
+    lv_obj_t* wifi_config_ssid_label_ = nullptr;
+    lv_obj_t* wifi_config_url_card_ = nullptr;
+    lv_obj_t* wifi_config_url_caption_label_ = nullptr;
+    lv_obj_t* wifi_config_url_label_ = nullptr;
+    lv_obj_t* wifi_config_hint_label_ = nullptr;
+
+    lv_obj_t* home_page_ = nullptr;
+    lv_obj_t* home_title_label_ = nullptr;
+    lv_obj_t* home_status_label_ = nullptr;
+    lv_timer_t* top_bar_timer_ = nullptr;
+
+    lv_obj_t* CreateFullScreenPage(lv_obj_t* screen);
+    static void TopBarTimerCb(lv_timer_t* timer);
+    lv_obj_t* CreateTopBar(lv_obj_t* parent,
+                           lv_obj_t** out_temp_label,
+                           lv_obj_t** out_humidity_label,
+                           lv_obj_t** out_wifi_icon_label,
+                           lv_obj_t** out_battery_label,
+                           bool show_wifi_icon,
+                           bool show_battery);
+    void CreateBootPage(lv_obj_t* screen);
+    void CreateWifiConfigPage(lv_obj_t* screen);
+    void CreateHomePage(lv_obj_t* screen);
+    void SwitchPage(UiPage page);
+    void UpdateWifiConfigMessage(const char* message);
+    void UpdateTopBar(lv_obj_t* temp_label, lv_obj_t* humidity_label, lv_obj_t* battery_label);
+    void UpdateWifiConfigPage();
+    void UpdateHomeStatus(const char* status);
+
+public:
+    void SetupUI() override;
+    void SetStatus(const char* status) override;
+    void ShowNotification(const char* notification, int duration_ms = 3000) override;
+    void SetEmotion(const char* emotion) override;
+    void SetChatMessage(const char* role, const char* content) override;
+    void ClearChatMessages() override;
+
+
 public:
     CustomLcdDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel_handle_t panel,
                   int width, int height, int offset_x, int offset_y,
@@ -57,5 +122,6 @@ public:
     void RLCD_Display();
 	void RLCD_SetPixel(uint16_t x, uint16_t y, uint8_t color);
 };
+
 
 #endif

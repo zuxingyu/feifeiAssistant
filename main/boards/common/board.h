@@ -71,6 +71,7 @@ public:
     virtual Led* GetLed();
     virtual AudioCodec* GetAudioCodec() = 0;
     virtual bool GetTemperature(float& esp32temp);
+    virtual bool GetHumidity(float& humidity);
     virtual Display* GetDisplay();
     virtual Camera* GetCamera();
     virtual NetworkInterface* GetNetwork() = 0;

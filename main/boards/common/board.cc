@@ -53,6 +53,10 @@ bool Board::GetTemperature(float& esp32temp){
     return false;
 }
 
+bool Board::GetHumidity(float& humidity) {
+    return false;
+}
+
 Display* Board::GetDisplay() {
     static NoDisplay display;
     return &display;
