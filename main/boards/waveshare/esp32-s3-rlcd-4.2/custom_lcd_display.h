@@ -26,6 +26,7 @@ private:
     enum class UiPage {
         kBoot,
         kWifiConfig,
+        kActivation,
         kHome,
     };
 
@@ -61,6 +62,7 @@ private:
     UiPage current_page_ = UiPage::kBoot;
     std::string last_status_text_;
     std::string last_message_text_;
+    std::string last_activation_code_;
 
     lv_obj_t* boot_page_ = nullptr;
     lv_obj_t* boot_logo_label_ = nullptr;
@@ -83,6 +85,19 @@ private:
     lv_obj_t* home_page_ = nullptr;
     lv_obj_t* home_title_label_ = nullptr;
     lv_obj_t* home_status_label_ = nullptr;
+
+    lv_obj_t* activation_page_ = nullptr;
+    lv_obj_t* activation_top_bar_ = nullptr;
+    lv_obj_t* activation_temp_label_ = nullptr;
+    lv_obj_t* activation_humidity_label_ = nullptr;
+    lv_obj_t* activation_datetime_label_ = nullptr;
+    lv_obj_t* activation_battery_label_ = nullptr;
+    lv_obj_t* activation_title_label_ = nullptr;
+    lv_obj_t* activation_code_card_ = nullptr;
+    lv_obj_t* activation_code_caption_label_ = nullptr;
+    lv_obj_t* activation_code_label_ = nullptr;
+    lv_obj_t* activation_hint_label_ = nullptr;
+
     lv_timer_t* top_bar_timer_ = nullptr;
 
     lv_obj_t* CreateFullScreenPage(lv_obj_t* screen);
@@ -90,17 +105,21 @@ private:
     lv_obj_t* CreateTopBar(lv_obj_t* parent,
                            lv_obj_t** out_temp_label,
                            lv_obj_t** out_humidity_label,
+                           lv_obj_t** out_datetime_label,
                            lv_obj_t** out_wifi_icon_label,
                            lv_obj_t** out_battery_label,
+                           bool show_datetime,
                            bool show_wifi_icon,
                            bool show_battery);
     void CreateBootPage(lv_obj_t* screen);
     void CreateWifiConfigPage(lv_obj_t* screen);
+    void CreateActivationPage(lv_obj_t* screen);
     void CreateHomePage(lv_obj_t* screen);
     void SwitchPage(UiPage page);
     void UpdateWifiConfigMessage(const char* message);
-    void UpdateTopBar(lv_obj_t* temp_label, lv_obj_t* humidity_label, lv_obj_t* battery_label);
+    void UpdateTopBar(lv_obj_t* temp_label, lv_obj_t* humidity_label, lv_obj_t* datetime_label, lv_obj_t* battery_label);
     void UpdateWifiConfigPage();
+    void UpdateActivationCode(const char* code);
     void UpdateHomeStatus(const char* status);
 
 public:

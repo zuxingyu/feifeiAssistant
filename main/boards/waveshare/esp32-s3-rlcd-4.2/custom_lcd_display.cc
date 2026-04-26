@@ -1,5 +1,6 @@
 #include <vector>
 #include <cstring>
+#include <ctime>
 #include <freertos/FreeRTOS.h>
 #include <esp_lcd_panel_io.h>
 #include <esp_log.h>
@@ -391,7 +392,9 @@ void CustomLcdDisplay::CreateWifiConfigPage(lv_obj_t* screen) {
         &wifi_config_temp_label_,
         &wifi_config_humidity_label_,
         nullptr,
+        nullptr,
         &wifi_config_battery_label_,
+        false,
         false,
         true);
 
@@ -511,7 +514,7 @@ void CustomLcdDisplay::CreateWifiConfigPage(lv_obj_t* screen) {
     lv_label_set_long_mode(wifi_config_hint_label_, LV_LABEL_LONG_WRAP);
     lv_label_set_text(wifi_config_hint_label_, "请先连接上方热点，再在浏览器中打开访问地址完成配置");
 
-    UpdateTopBar(wifi_config_temp_label_, wifi_config_humidity_label_, wifi_config_battery_label_);
+    UpdateTopBar(wifi_config_temp_label_, wifi_config_humidity_label_, nullptr, wifi_config_battery_label_);
 
     lv_obj_add_flag(wifi_config_page_, LV_OBJ_FLAG_HIDDEN);
 }
@@ -536,6 +539,84 @@ void CustomLcdDisplay::CreateHomePage(lv_obj_t* screen) {
     lv_obj_add_flag(home_page_, LV_OBJ_FLAG_HIDDEN);
 }
 
+void CustomLcdDisplay::CreateActivationPage(lv_obj_t* screen) {
+    activation_page_ = CreateFullScreenPage(screen);
+
+    activation_top_bar_ = CreateTopBar(
+        activation_page_,
+        &activation_temp_label_,
+        &activation_humidity_label_,
+        &activation_datetime_label_,
+        nullptr,
+        &activation_battery_label_,
+        true,
+        false,
+        true);
+
+    auto* main_area = lv_obj_create(activation_page_);
+    lv_obj_set_size(main_area, LV_HOR_RES, LV_VER_RES - 28);
+    lv_obj_align(main_area, LV_ALIGN_TOP_LEFT, 0, 28);
+    lv_obj_set_style_radius(main_area, 0, 0);
+    lv_obj_set_style_bg_color(main_area, lv_color_white(), 0);
+    lv_obj_set_style_border_width(main_area, 0, 0);
+    lv_obj_set_style_pad_left(main_area, 14, 0);
+    lv_obj_set_style_pad_right(main_area, 14, 0);
+    lv_obj_set_style_pad_top(main_area, 8, 0);
+    lv_obj_set_style_pad_bottom(main_area, 0, 0);
+    lv_obj_set_style_pad_row(main_area, 8, 0);
+    lv_obj_set_scrollbar_mode(main_area, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_set_flex_flow(main_area, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(main_area, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    activation_title_label_ = lv_label_create(main_area);
+    lv_label_set_text(activation_title_label_, "激活设备");
+    lv_obj_set_style_text_font(activation_title_label_, &alibaba_puhui_title_24, 0);
+    lv_obj_set_style_text_color(activation_title_label_, lv_color_black(), 0);
+    lv_obj_set_style_text_align(activation_title_label_, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_margin_top(activation_title_label_, 6, 0);
+
+    activation_code_card_ = lv_obj_create(main_area);
+    lv_obj_set_width(activation_code_card_, LV_HOR_RES - 28);
+    lv_obj_set_height(activation_code_card_, 72);
+    lv_obj_set_style_bg_color(activation_code_card_, lv_color_white(), 0);
+    lv_obj_set_style_border_width(activation_code_card_, 2, 0);
+    lv_obj_set_style_border_color(activation_code_card_, lv_color_black(), 0);
+    lv_obj_set_style_pad_left(activation_code_card_, 10, 0);
+    lv_obj_set_style_pad_right(activation_code_card_, 10, 0);
+    lv_obj_set_style_pad_top(activation_code_card_, 6, 0);
+    lv_obj_set_style_pad_bottom(activation_code_card_, 6, 0);
+    lv_obj_set_style_pad_row(activation_code_card_, 4, 0);
+    lv_obj_set_scrollbar_mode(activation_code_card_, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_set_flex_flow(activation_code_card_, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(activation_code_card_, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    activation_code_caption_label_ = lv_label_create(activation_code_card_);
+    lv_obj_set_width(activation_code_caption_label_, LV_PCT(100));
+    lv_obj_set_style_text_font(activation_code_caption_label_, &alibaba_puhui_14, 0);
+    lv_obj_set_style_text_color(activation_code_caption_label_, lv_color_black(), 0);
+    lv_obj_set_style_text_align(activation_code_caption_label_, LV_TEXT_ALIGN_CENTER, 0);
+    lv_label_set_text(activation_code_caption_label_, "激活码");
+
+    activation_code_label_ = lv_label_create(activation_code_card_);
+    lv_obj_set_width(activation_code_label_, LV_PCT(100));
+    lv_obj_set_style_text_font(activation_code_label_, &alibaba_puhui_title_24, 0);
+    lv_obj_set_style_text_color(activation_code_label_, lv_color_black(), 0);
+    lv_obj_set_style_text_align(activation_code_label_, LV_TEXT_ALIGN_CENTER, 0);
+    lv_label_set_long_mode(activation_code_label_, LV_LABEL_LONG_WRAP);
+    lv_label_set_text(activation_code_label_, "----");
+
+    activation_hint_label_ = lv_label_create(main_area);
+    lv_obj_set_width(activation_hint_label_, LV_HOR_RES - 40);
+    lv_obj_set_style_text_font(activation_hint_label_, &alibaba_puhui_14, 0);
+    lv_obj_set_style_text_color(activation_hint_label_, lv_color_black(), 0);
+    lv_obj_set_style_text_align(activation_hint_label_, LV_TEXT_ALIGN_CENTER, 0);
+    lv_label_set_long_mode(activation_hint_label_, LV_LABEL_LONG_WRAP);
+    lv_label_set_text(activation_hint_label_, "请在小智控制台输入验证码完成激活");
+
+    UpdateTopBar(activation_temp_label_, activation_humidity_label_, activation_datetime_label_, activation_battery_label_);
+    lv_obj_add_flag(activation_page_, LV_OBJ_FLAG_HIDDEN);
+}
+
 void CustomLcdDisplay::SwitchPage(UiPage page) {
     current_page_ = page;
 
@@ -552,6 +633,7 @@ void CustomLcdDisplay::SwitchPage(UiPage page) {
 
     set_visible(boot_page_, page == UiPage::kBoot);
     set_visible(wifi_config_page_, page == UiPage::kWifiConfig);
+    set_visible(activation_page_, page == UiPage::kActivation);
     set_visible(home_page_, page == UiPage::kHome);
 }
 
@@ -564,8 +646,10 @@ void CustomLcdDisplay::UpdateWifiConfigMessage(const char* message) {
 lv_obj_t* CustomLcdDisplay::CreateTopBar(lv_obj_t* parent,
                                         lv_obj_t** out_temp_label,
                                         lv_obj_t** out_humidity_label,
+                                        lv_obj_t** out_datetime_label,
                                         lv_obj_t** out_wifi_icon_label,
                                         lv_obj_t** out_battery_label,
+                                        bool show_datetime,
                                         bool show_wifi_icon,
                                         bool show_battery) {
     // 顶部状态栏（公共组件）：
@@ -595,6 +679,11 @@ lv_obj_t* CustomLcdDisplay::CreateTopBar(lv_obj_t* parent,
     lv_obj_set_size(top_left, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
     lv_obj_set_flex_flow(top_left, LV_FLEX_FLOW_ROW);
     lv_obj_set_style_pad_column(top_left, 6, 0);
+
+    lv_obj_t* datetime_label = lv_label_create(top_left);
+    lv_obj_set_style_text_font(datetime_label, &alibaba_puhui_14, 0);
+    lv_obj_set_style_text_color(datetime_label, lv_color_black(), 0);
+    lv_label_set_text(datetime_label, "----年--月--日 --:--  ");
 
     lv_obj_t* temp_label = lv_label_create(top_left);
     lv_obj_set_style_text_font(temp_label, &alibaba_puhui_14, 0);
@@ -630,6 +719,9 @@ lv_obj_t* CustomLcdDisplay::CreateTopBar(lv_obj_t* parent,
     if (!show_battery) {
         lv_obj_add_flag(battery_label, LV_OBJ_FLAG_HIDDEN);
     }
+    if (!show_datetime) {
+        lv_obj_add_flag(datetime_label, LV_OBJ_FLAG_HIDDEN);
+    }
 
     if (out_wifi_icon_label != nullptr) {
         *out_wifi_icon_label = wifi_icon_label;
@@ -644,6 +736,9 @@ lv_obj_t* CustomLcdDisplay::CreateTopBar(lv_obj_t* parent,
     if (out_humidity_label != nullptr) {
         *out_humidity_label = humidity_label;
     }
+    if (out_datetime_label != nullptr) {
+        *out_datetime_label = datetime_label;
+    }
 
     return top_bar;
 }
@@ -653,10 +748,11 @@ void CustomLcdDisplay::TopBarTimerCb(lv_timer_t* timer) {
     if (self == nullptr) {
         return;
     }
-    self->UpdateTopBar(self->wifi_config_temp_label_, self->wifi_config_humidity_label_, self->wifi_config_battery_label_);
+    self->UpdateTopBar(self->wifi_config_temp_label_, self->wifi_config_humidity_label_, nullptr, self->wifi_config_battery_label_);
+    self->UpdateTopBar(self->activation_temp_label_, self->activation_humidity_label_, self->activation_datetime_label_, self->activation_battery_label_);
 }
 
-void CustomLcdDisplay::UpdateTopBar(lv_obj_t* temp_label, lv_obj_t* humidity_label, lv_obj_t* battery_label) {
+void CustomLcdDisplay::UpdateTopBar(lv_obj_t* temp_label, lv_obj_t* humidity_label, lv_obj_t* datetime_label, lv_obj_t* battery_label) {
     float temp = 0.0f;
     bool temp_ok = Board::GetInstance().GetTemperature(temp);
 
@@ -679,6 +775,20 @@ void CustomLcdDisplay::UpdateTopBar(lv_obj_t* temp_label, lv_obj_t* humidity_lab
             lv_label_set_text(humidity_label, buf);
         } else {
             lv_label_set_text(humidity_label, "--%");
+        }
+    }
+
+    if (datetime_label != nullptr) {
+        time_t now = time(nullptr);
+        struct tm time_info = {};
+        bool time_valid = (now > 0) && (localtime_r(&now, &time_info) != nullptr) && (time_info.tm_year >= 2025 - 1900);
+        if (time_valid) {
+            char datetime_buf[48];
+            strftime(datetime_buf, sizeof(datetime_buf), "%Y年%m月%d日 %H:%M  ", &time_info);
+            std::string datetime_with_gap = std::string(datetime_buf) + "  ";
+            lv_label_set_text(datetime_label, datetime_with_gap.c_str());
+        } else {
+            lv_label_set_text(datetime_label, "----年--月--日 --:--  ");
         }
     }
 
@@ -751,6 +861,25 @@ void CustomLcdDisplay::UpdateHomeStatus(const char* status) {
     }
 }
 
+void CustomLcdDisplay::UpdateActivationCode(const char* code) {
+    if (code != nullptr && code[0] != '\0') {
+        bool all_digits = true;
+        for (const char* p = code; *p != '\0'; ++p) {
+            if (*p < '0' || *p > '9') {
+                all_digits = false;
+                break;
+            }
+        }
+        if (all_digits) {
+            last_activation_code_ = code;
+        }
+    }
+    const char* safe_code = last_activation_code_.empty() ? "----" : last_activation_code_.c_str();
+    if (activation_code_label_ != nullptr) {
+        lv_label_set_text(activation_code_label_, safe_code);
+    }
+}
+
 void CustomLcdDisplay::SetupUI() {
     if (setup_ui_called_) {
         ESP_LOGW(TAG, "SetupUI() called multiple times, skipping duplicate call");
@@ -769,6 +898,7 @@ void CustomLcdDisplay::SetupUI() {
 
     CreateBootPage(screen);
     CreateWifiConfigPage(screen);
+    CreateActivationPage(screen);
     CreateHomePage(screen);
     SwitchPage(UiPage::kBoot);
 
@@ -789,8 +919,15 @@ void CustomLcdDisplay::SetStatus(const char* status) {
 
     if (strcmp(safe_status, Lang::Strings::WIFI_CONFIG_MODE) == 0) {
         SwitchPage(UiPage::kWifiConfig);
-        UpdateTopBar(wifi_config_temp_label_, wifi_config_humidity_label_, wifi_config_battery_label_);
+        UpdateTopBar(wifi_config_temp_label_, wifi_config_humidity_label_, nullptr, wifi_config_battery_label_);
         UpdateWifiConfigPage();
+    } else if (strcmp(safe_status, Lang::Strings::ACTIVATION) == 0) {
+        SwitchPage(UiPage::kActivation);
+        UpdateTopBar(activation_temp_label_, activation_humidity_label_, activation_datetime_label_, activation_battery_label_);
+        if (activation_hint_label_ != nullptr) {
+            lv_label_set_text(activation_hint_label_, "请在小智控制台输入验证码完成激活");
+        }
+        UpdateActivationCode(nullptr);
     } else if (strcmp(safe_status, Lang::Strings::STANDBY) == 0) {
         SwitchPage(UiPage::kHome);
     }
@@ -821,6 +958,8 @@ void CustomLcdDisplay::SetChatMessage(const char* role, const char* content) {
 
     if (current_page_ == UiPage::kWifiConfig) {
         UpdateWifiConfigMessage(content);
+    } else if (current_page_ == UiPage::kActivation) {
+        UpdateActivationCode(content);
     } else if (current_page_ == UiPage::kHome && content != nullptr && content[0] != '\0') {
         UpdateHomeStatus(content);
     }

@@ -629,6 +629,8 @@ void Application::ShowActivationCode(const std::string& code, const std::string&
 
     // 这段语音会占用较多 SRAM，因此在后续播报数字前先等待它播放完成。
     Alert(Lang::Strings::ACTIVATION, message.c_str(), "link", Lang::Sounds::OGG_ACTIVATION);
+    // 将验证码直接下发给显示层，避免激活页只能看到提示文案看不到验证码。
+    Board::GetInstance().GetDisplay()->SetChatMessage("system", code.c_str());
 
     for (const auto& digit : code) {
         auto it = std::find_if(digit_sounds.begin(), digit_sounds.end(),

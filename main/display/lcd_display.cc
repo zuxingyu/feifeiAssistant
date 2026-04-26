@@ -1148,16 +1148,42 @@ void LcdDisplay::SetEmotion(const char* emotion) {
 
 void LcdDisplay::SetTheme(Theme* theme) {
     DisplayLockGuard lock(this);
-    
+    if (theme == nullptr) {
+        ESP_LOGW(TAG, "Skip SetTheme because theme is null");
+        return;
+    }
+
     auto lvgl_theme = static_cast<LvglTheme*>(theme);
-    
+
+    const lv_font_t* text_font = &BUILTIN_TEXT_FONT;
+    auto text_font_holder = lvgl_theme->text_font();
+    if (text_font_holder != nullptr && text_font_holder->font() != nullptr) {
+        text_font = text_font_holder->font();
+    }
+
+    const lv_font_t* icon_font = &BUILTIN_ICON_FONT;
+    auto icon_font_holder = lvgl_theme->icon_font();
+    if (icon_font_holder != nullptr && icon_font_holder->font() != nullptr) {
+        icon_font = icon_font_holder->font();
+    }
+
+    const lv_font_t* large_icon_font = &font_awesome_30_4;
+    auto large_icon_font_holder = lvgl_theme->large_icon_font();
+    if (large_icon_font_holder != nullptr && large_icon_font_holder->font() != nullptr) {
+        large_icon_font = large_icon_font_holder->font();
+    }
+
+    // UI objects may still be under initialization when activation flow applies assets.
+    if (container_ == nullptr || network_label_ == nullptr || mute_label_ == nullptr ||
+        battery_label_ == nullptr || status_label_ == nullptr || notification_label_ == nullptr ||
+        emoji_label_ == nullptr || low_battery_popup_ == nullptr) {
+        ESP_LOGW(TAG, "SetTheme deferred: UI not ready yet");
+        Display::SetTheme(lvgl_theme);
+        return;
+    }
+
     // Get the active screen
     lv_obj_t* screen = lv_screen_active();
-
-    // Set font
-    auto text_font = lvgl_theme->text_font()->font();
-    auto icon_font = lvgl_theme->icon_font()->font();
-    auto large_icon_font = lvgl_theme->large_icon_font()->font();
 
     if (text_font->line_height >= 40) {
         lv_obj_set_style_text_font(mute_label_, large_icon_font, 0);
@@ -1170,8 +1196,10 @@ void LcdDisplay::SetTheme(Theme* theme) {
     }
 
     // Set parent text color
-    lv_obj_set_style_text_font(screen, text_font, 0);
-    lv_obj_set_style_text_color(screen, lvgl_theme->text_color(), 0);
+    if (screen != nullptr) {
+        lv_obj_set_style_text_font(screen, text_font, 0);
+        lv_obj_set_style_text_color(screen, lvgl_theme->text_color(), 0);
+    }
 
     // Set background image
     if (lvgl_theme->background_image() != nullptr) {
@@ -1198,6 +1226,10 @@ void LcdDisplay::SetTheme(Theme* theme) {
     // If we have the chat message style, update all message bubbles
 #if CONFIG_USE_WECHAT_MESSAGE_STYLE
     // Set content background opacity
+    if (content_ == nullptr) {
+        Display::SetTheme(lvgl_theme);
+        return;
+    }
     lv_obj_set_style_bg_opa(content_, LV_OPA_TRANSP, 0);
 
     // Iterate through all children of content (message containers or bubbles)
