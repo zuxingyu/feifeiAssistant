@@ -3,6 +3,7 @@
 
 #include <driver/gpio.h>
 #include "lcd_display.h"
+#include "home_data_store.h"
 
 struct _lv_timer_t;
 typedef struct _lv_timer_t lv_timer_t;
@@ -83,8 +84,42 @@ private:
     lv_obj_t* wifi_config_hint_label_ = nullptr;
 
     lv_obj_t* home_page_ = nullptr;
-    lv_obj_t* home_title_label_ = nullptr;
-    lv_obj_t* home_status_label_ = nullptr;
+    lv_obj_t* home_top_bar_ = nullptr;
+    lv_obj_t* home_top_temp_label_ = nullptr;
+    lv_obj_t* home_top_humidity_label_ = nullptr;
+    // 主页不显示时间（时间在下方大字显示），所以没有 datetime_label
+    lv_obj_t* home_top_wifi_icon_label_ = nullptr;
+    lv_obj_t* home_top_battery_label_ = nullptr;
+
+    // 时间条：日期 + 大字时钟
+    lv_obj_t* home_date_label_ = nullptr;
+    lv_obj_t* home_clock_label_ = nullptr;
+
+    // 三日天气条（每列4行：日期/图标/温度/描述）
+    lv_obj_t* home_weather_day0_label_ = nullptr;
+    lv_obj_t* home_weather_icon0_label_ = nullptr;
+    lv_obj_t* home_weather_temp0_label_ = nullptr;
+    lv_obj_t* home_weather_desc0_label_ = nullptr;
+    lv_obj_t* home_weather_day1_label_ = nullptr;
+    lv_obj_t* home_weather_icon1_label_ = nullptr;
+    lv_obj_t* home_weather_temp1_label_ = nullptr;
+    lv_obj_t* home_weather_desc1_label_ = nullptr;
+    lv_obj_t* home_weather_day2_label_ = nullptr;
+    lv_obj_t* home_weather_icon2_label_ = nullptr;
+    lv_obj_t* home_weather_temp2_label_ = nullptr;
+    lv_obj_t* home_weather_desc2_label_ = nullptr;
+
+    // 今日/明日课程（标题14号，内容16号）
+    lv_obj_t* home_today_title_label_ = nullptr;
+    lv_obj_t* home_today_courses_label_ = nullptr;
+    lv_obj_t* home_tomorrow_title_label_ = nullptr;
+    lv_obj_t* home_tomorrow_courses_label_ = nullptr;
+
+    // 底部聊天条
+    lv_obj_t* home_bottom_status_label_ = nullptr;
+
+    HomeDataStore* home_data_store_ = nullptr;
+    lv_timer_t* home_refresh_timer_ = nullptr;
 
     lv_obj_t* activation_page_ = nullptr;
     lv_obj_t* activation_top_bar_ = nullptr;
@@ -121,6 +156,8 @@ private:
     void UpdateWifiConfigPage();
     void UpdateActivationCode(const char* code);
     void UpdateHomeStatus(const char* status);
+    void UpdateHomePage();
+    static void HomeRefreshTimerCb(lv_timer_t* timer);
 
 public:
     void SetupUI() override;

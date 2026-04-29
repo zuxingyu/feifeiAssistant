@@ -13,6 +13,7 @@
 #include "settings.h"
 #include "config.h"
 #include "board.h"
+#include "home_data_store.h"
 
 void CustomLcdDisplay::Lvgl_flush_cb(lv_display_t * disp, const lv_area_t * area, uint8_t * color_p)
 {
@@ -20,16 +21,16 @@ void CustomLcdDisplay::Lvgl_flush_cb(lv_display_t * disp, const lv_area_t * area
     CustomLcdDisplay *Disp = (CustomLcdDisplay *)lv_display_get_user_data(disp);
     uint16_t *buffer = (uint16_t *)color_p;
     // LVGL 输出的是 RGB565，这里按阈值转换成 RLCD 使用的黑白位图格式。
-  	for(int y = area->y1; y <= area->y2; y++)
-  	{
-  	 	for(int x = area->x1; x <= area->x2; x++) 
-  	 	{
-  	 	   	uint8_t color = (*buffer < 0x7fff) ? ColorBlack : ColorWhite;
-  	 	   	Disp->RLCD_SetPixel(x,y,color);
-  	 	   	buffer++;
-  	 	}
-  	}
-  	Disp->RLCD_Display();
+ 	for(int y = area->y1; y <= area->y2; y++)
+ 	{
+ 	 	for(int x = area->x1; x <= area->x2; x++) 
+ 	 	{
+ 	 	  	uint8_t color = (*buffer < 0x7fff) ? ColorBlack : ColorWhite;
+ 	 	  	Disp->RLCD_SetPixel(x,y,color);
+ 	 	  	buffer++;
+ 	 	}
+ 	}
+ 	Disp->RLCD_Display();
 	lv_disp_flush_ready(disp);
 }
 
@@ -101,7 +102,7 @@ height_(height)
     lv_init();
     lvgl_port_cfg_t port_cfg = ESP_LVGL_PORT_INIT_CONFIG();
     port_cfg.task_priority   = 2;
-    port_cfg.timer_period_ms = 50;
+    port_cfg.timer_period_ms = 500;
     lvgl_port_init(&port_cfg);
     lvgl_port_lock(0);
 
@@ -111,7 +112,7 @@ height_(height)
 	size_t lvgl_buffer_size = LV_COLOR_FORMAT_GET_SIZE(LV_COLOR_FORMAT_RGB565) * transfer;
 	uint8_t *lvgl_buffer1 = (uint8_t *) heap_caps_malloc(lvgl_buffer_size, MALLOC_CAP_SPIRAM);
     assert(lvgl_buffer1);
-	lv_display_set_buffers(display_, lvgl_buffer1, NULL, lvgl_buffer_size, LV_DISPLAY_RENDER_MODE_PARTIAL);
+	lv_display_set_buffers(display_, lvgl_buffer1, NULL, lvgl_buffer_size, LV_DISPLAY_RENDER_MODE_FULL);
 
     ESP_LOGI(TAG, "RLCD init");
     RLCD_Init();
@@ -134,6 +135,14 @@ CustomLcdDisplay::~CustomLcdDisplay() {
             Unlock();
         }
     }
+    if (home_refresh_timer_ != nullptr) {
+        if (Lock(30000)) {
+            lv_timer_del(home_refresh_timer_);
+            home_refresh_timer_ = nullptr;
+            Unlock();
+        }
+    }
+    delete home_data_store_;
 }
 
 void CustomLcdDisplay::InitPortraitLUT() {
@@ -354,8 +363,27 @@ void CustomLcdDisplay::RLCD_Display() {
 
 LV_FONT_DECLARE(taobao_logo_font_60);
 LV_FONT_DECLARE(alibaba_puhui_title_24);
+LV_FONT_DECLARE(alibaba_puhui_24);
 LV_FONT_DECLARE(alibaba_puhui_14);
 LV_FONT_DECLARE(alibaba_puhui_16);
+LV_FONT_DECLARE(font_awesome_16_4);
+#include "font_awesome.h"
+
+/**
+ * @brief 天气描述 → Font Awesome 图标映射
+ */
+static const char* get_weather_icon(const std::string& desc) {
+    if (desc.empty()) return "";
+    if (desc.find("晴") != std::string::npos) return FONT_AWESOME_SUN;
+    if (desc.find("多云") != std::string::npos) return FONT_AWESOME_CLOUD_SUN;
+    if (desc.find("阴") != std::string::npos) return FONT_AWESOME_CLOUD;
+    if (desc.find("大雨") != std::string::npos || desc.find("暴雨") != std::string::npos) return FONT_AWESOME_CLOUD_SHOWERS_HEAVY;
+    if (desc.find("雨") != std::string::npos || desc.find("阵雨") != std::string::npos) return FONT_AWESOME_CLOUD_RAIN;
+    if (desc.find("雷") != std::string::npos) return FONT_AWESOME_CLOUD_BOLT;
+    if (desc.find("雪") != std::string::npos) return FONT_AWESOME_SNOWFLAKE;
+    if (desc.find("雾") != std::string::npos || desc.find("霾") != std::string::npos) return FONT_AWESOME_SMOG;
+    return FONT_AWESOME_SUN;  // 默认晴天
+}
 
 lv_obj_t* CustomLcdDisplay::CreateFullScreenPage(lv_obj_t* screen) {
     auto* page = lv_obj_create(screen);
@@ -520,22 +548,322 @@ void CustomLcdDisplay::CreateWifiConfigPage(lv_obj_t* screen) {
 }
 
 void CustomLcdDisplay::CreateHomePage(lv_obj_t* screen) {
+    // ========================================================================
+    // 主页布局（参照 docs/v2/prototype/ui-r2/device-home.html）
+    // ┌──────────────────────────────────────┐
+    // │ 1月2日 12:33          WiFi  电池 82% │  <- 顶部栏 (28px)
+    // ├──────────────────────────────────────┤
+    // │ 今天 周四                            │  <- 时间条
+    // │ 12:33                               │
+    // ├──────────────────────────────────────┤
+    // │ 今天 晴 22/14 │明天 多云│后天 小雨   │  <- 三日天气条
+    // ├──────────────────────────────────────┤
+    // │ 今日课程                             │  <- 课程区
+    // │ 1.语文 2.数学 3.英语 4.科学          │
+    // │ 明日课程                             │
+    // │ 1.数学 2.语文 ...                    │
+    // ├──────────────────────────────────────┤
+    // │ 小智: 待命                           │  <- 底部状态条
+    // └──────────────────────────────────────┘
+    // ========================================================================
+
     home_page_ = CreateFullScreenPage(screen);
 
-    home_title_label_ = lv_label_create(home_page_);
-    lv_label_set_text(home_title_label_, "主页");
-    lv_obj_set_style_text_color(home_title_label_, lv_color_black(), 0);
-    lv_obj_set_style_text_align(home_title_label_, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_align(home_title_label_, LV_ALIGN_TOP_MID, 0, 40);
+    // —— 初始化 HomeDataStore 并加载 NVS 数据 ——
+    if (home_data_store_ == nullptr) {
+        home_data_store_ = new HomeDataStore();
+        home_data_store_->LoadFromNvs();
+    }
 
-    home_status_label_ = lv_label_create(home_page_);
-    lv_obj_set_width(home_status_label_, LV_HOR_RES - 40);
-    lv_obj_set_style_text_color(home_status_label_, lv_color_black(), 0);
-    lv_obj_set_style_text_align(home_status_label_, LV_TEXT_ALIGN_CENTER, 0);
-    lv_label_set_long_mode(home_status_label_, LV_LABEL_LONG_WRAP);
-    lv_label_set_text(home_status_label_, Lang::Strings::STANDBY);
-    lv_obj_center(home_status_label_);
+    // ====================== 顶部栏（28px）======================
+    // 主页的顶部栏不显示时间（时间在下方大字显示），只显示温湿度/WiFi/电池
+    home_top_bar_ = CreateTopBar(
+        home_page_,
+        &home_top_temp_label_,
+        &home_top_humidity_label_,
+        nullptr,  // 主页不显示时间（时间在下方大字显示）
+        &home_top_wifi_icon_label_,
+        &home_top_battery_label_,
+        false,    // 不显示日期时间
+        true,     // 显示 WiFi 图标
+        true);    // 显示电池
 
+    // ====================== 时间条（日期 + 大字时钟）======================
+    // 主内容区从 y=28 开始，使用 flex 纵向排版
+    auto* main_area = lv_obj_create(home_page_);
+    lv_obj_set_size(main_area, LV_HOR_RES, LV_VER_RES - 28);
+    lv_obj_align(main_area, LV_ALIGN_TOP_LEFT, 0, 28);
+    lv_obj_set_style_radius(main_area, 0, 0);
+    lv_obj_set_style_bg_color(main_area, lv_color_white(), 0);
+    lv_obj_set_style_border_width(main_area, 0, 0);
+    lv_obj_set_style_pad_all(main_area, 0, 0);
+    lv_obj_set_scrollbar_mode(main_area, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_set_flex_flow(main_area, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(main_area, LV_FLEX_ALIGN_START,
+                          LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    // —— 时间条容器（日期左对齐、时间居中）——
+    auto* time_strip = lv_obj_create(main_area);
+    lv_obj_set_size(time_strip, LV_HOR_RES, 44);
+    lv_obj_set_style_radius(time_strip, 0, 0);
+    lv_obj_set_style_bg_color(time_strip, lv_color_white(), 0);
+    lv_obj_set_style_border_width(time_strip, 1, 0);
+    lv_obj_set_style_border_side(time_strip, LV_BORDER_SIDE_BOTTOM, 0);
+    lv_obj_set_style_border_color(time_strip, lv_color_black(), 0);
+    lv_obj_set_style_pad_left(time_strip, 12, 0);
+    lv_obj_set_style_pad_right(time_strip, 12, 0);
+    lv_obj_set_style_pad_top(time_strip, 6, 0);
+    lv_obj_set_style_pad_bottom(time_strip, 6, 0);
+    lv_obj_set_scrollbar_mode(time_strip, LV_SCROLLBAR_MODE_OFF);
+
+    // 日期：左对齐
+    home_date_label_ = lv_label_create(time_strip);
+    lv_obj_set_style_text_font(home_date_label_, &alibaba_puhui_16, 0);
+    lv_obj_set_style_text_color(home_date_label_, lv_color_black(), 0);
+    lv_label_set_text(home_date_label_, "---- --");
+    lv_obj_align(home_date_label_, LV_ALIGN_LEFT_MID, 0, 0);
+
+    // 大字时钟：居中
+    home_clock_label_ = lv_label_create(time_strip);
+    lv_obj_set_style_text_font(home_clock_label_, &alibaba_puhui_24, 0);
+    lv_obj_set_style_text_color(home_clock_label_, lv_color_black(), 0);
+    lv_obj_set_style_text_align(home_clock_label_, LV_TEXT_ALIGN_CENTER, 0);
+    lv_label_set_text(home_clock_label_, "--:--");
+    lv_obj_align(home_clock_label_, LV_ALIGN_CENTER, 0, 0);
+
+    // ====================== 三日天气条（4行/列：日期+图标+温度+描述）======================
+    auto* weather_strip = lv_obj_create(main_area);
+    lv_obj_set_size(weather_strip, LV_HOR_RES, 76);
+    lv_obj_set_style_radius(weather_strip, 0, 0);
+    lv_obj_set_style_bg_color(weather_strip, lv_color_white(), 0);
+    lv_obj_set_style_border_width(weather_strip, 1, 0);
+    lv_obj_set_style_border_side(weather_strip, LV_BORDER_SIDE_BOTTOM, 0);
+    lv_obj_set_style_border_color(weather_strip, lv_color_black(), 0);
+    lv_obj_set_style_pad_left(weather_strip, 2, 0);
+    lv_obj_set_style_pad_right(weather_strip, 2, 0);
+    lv_obj_set_style_pad_top(weather_strip, 2, 0);
+    lv_obj_set_style_pad_bottom(weather_strip, 2, 0);
+    lv_obj_set_scrollbar_mode(weather_strip, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_set_flex_flow(weather_strip, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(weather_strip, LV_FLEX_ALIGN_SPACE_EVENLY,
+                          LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    // 今天天气列
+    {
+        auto* col0 = lv_obj_create(weather_strip);
+        lv_obj_set_width(col0, LV_PCT(30));
+        lv_obj_set_flex_grow(col0, 1);
+        lv_obj_set_style_radius(col0, 0, 0);
+        lv_obj_set_style_bg_color(col0, lv_color_white(), 0);
+        lv_obj_set_style_border_width(col0, 0, 0);
+        lv_obj_set_style_pad_all(col0, 1, 0);
+        lv_obj_set_style_pad_row(col0, 0, 0);
+        lv_obj_set_scrollbar_mode(col0, LV_SCROLLBAR_MODE_OFF);
+        lv_obj_set_flex_flow(col0, LV_FLEX_FLOW_COLUMN);
+        lv_obj_set_flex_align(col0, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+        home_weather_day0_label_ = lv_label_create(col0);
+        lv_obj_set_style_text_font(home_weather_day0_label_, &alibaba_puhui_14, 0);
+        lv_obj_set_style_text_color(home_weather_day0_label_, lv_color_black(), 0);
+        lv_label_set_text(home_weather_day0_label_, "今天");
+
+        home_weather_icon0_label_ = lv_label_create(col0);
+        lv_obj_set_style_text_font(home_weather_icon0_label_, &font_awesome_16_4, 0);
+        lv_obj_set_style_text_color(home_weather_icon0_label_, lv_color_black(), 0);
+        lv_label_set_text(home_weather_icon0_label_, "");
+
+        home_weather_temp0_label_ = lv_label_create(col0);
+        lv_obj_set_style_text_font(home_weather_temp0_label_, &alibaba_puhui_14, 0);
+        lv_obj_set_style_text_color(home_weather_temp0_label_, lv_color_black(), 0);
+        lv_label_set_text(home_weather_temp0_label_, "--°C");
+
+        home_weather_desc0_label_ = lv_label_create(col0);
+        lv_obj_set_style_text_font(home_weather_desc0_label_, &alibaba_puhui_14, 0);
+        lv_obj_set_style_text_color(home_weather_desc0_label_, lv_color_black(), 0);
+        lv_label_set_text(home_weather_desc0_label_, "--");
+    }
+    {
+        // 列分隔线 1
+        auto* wsep1 = lv_obj_create(weather_strip);
+        lv_obj_set_size(wsep1, 1, 78);
+        lv_obj_set_style_radius(wsep1, 0, 0);
+        lv_obj_set_style_bg_color(wsep1, lv_color_black(), 0);
+        lv_obj_set_style_border_width(wsep1, 0, 0);
+        lv_obj_set_style_pad_all(wsep1, 0, 0);
+    }
+    // 明天天气列
+    {
+        auto* col1 = lv_obj_create(weather_strip);
+        lv_obj_set_width(col1, LV_PCT(30));
+        lv_obj_set_flex_grow(col1, 1);
+        lv_obj_set_style_radius(col1, 0, 0);
+        lv_obj_set_style_bg_color(col1, lv_color_white(), 0);
+        lv_obj_set_style_border_width(col1, 0, 0);
+        lv_obj_set_style_pad_all(col1, 1, 0);
+        lv_obj_set_style_pad_row(col1, 0, 0);
+        lv_obj_set_scrollbar_mode(col1, LV_SCROLLBAR_MODE_OFF);
+        lv_obj_set_flex_flow(col1, LV_FLEX_FLOW_COLUMN);
+        lv_obj_set_flex_align(col1, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+        home_weather_day1_label_ = lv_label_create(col1);
+        lv_obj_set_style_text_font(home_weather_day1_label_, &alibaba_puhui_14, 0);
+        lv_obj_set_style_text_color(home_weather_day1_label_, lv_color_black(), 0);
+        lv_label_set_text(home_weather_day1_label_, "明天");
+
+        home_weather_icon1_label_ = lv_label_create(col1);
+        lv_obj_set_style_text_font(home_weather_icon1_label_, &font_awesome_16_4, 0);
+        lv_obj_set_style_text_color(home_weather_icon1_label_, lv_color_black(), 0);
+        lv_label_set_text(home_weather_icon1_label_, "");
+
+        home_weather_temp1_label_ = lv_label_create(col1);
+        lv_obj_set_style_text_font(home_weather_temp1_label_, &alibaba_puhui_14, 0);
+        lv_obj_set_style_text_color(home_weather_temp1_label_, lv_color_black(), 0);
+        lv_label_set_text(home_weather_temp1_label_, "--°C");
+
+        home_weather_desc1_label_ = lv_label_create(col1);
+        lv_obj_set_style_text_font(home_weather_desc1_label_, &alibaba_puhui_14, 0);
+        lv_obj_set_style_text_color(home_weather_desc1_label_, lv_color_black(), 0);
+        lv_label_set_text(home_weather_desc1_label_, "--");
+    }
+    {
+        // 列分隔线 2
+        auto* wsep2 = lv_obj_create(weather_strip);
+        lv_obj_set_size(wsep2, 1, 70);
+        lv_obj_set_style_radius(wsep2, 0, 0);
+        lv_obj_set_style_bg_color(wsep2, lv_color_black(), 0);
+        lv_obj_set_style_border_width(wsep2, 0, 0);
+        lv_obj_set_style_pad_all(wsep2, 0, 0);
+    }
+    // 后天天气列
+    {
+        auto* col2 = lv_obj_create(weather_strip);
+        lv_obj_set_width(col2, LV_PCT(30));
+        lv_obj_set_flex_grow(col2, 1);
+        lv_obj_set_style_radius(col2, 0, 0);
+        lv_obj_set_style_bg_color(col2, lv_color_white(), 0);
+        lv_obj_set_style_border_width(col2, 0, 0);
+        lv_obj_set_style_pad_all(col2, 1, 0);
+        lv_obj_set_style_pad_row(col2, 0, 0);
+        lv_obj_set_scrollbar_mode(col2, LV_SCROLLBAR_MODE_OFF);
+        lv_obj_set_flex_flow(col2, LV_FLEX_FLOW_COLUMN);
+        lv_obj_set_flex_align(col2, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+        home_weather_day2_label_ = lv_label_create(col2);
+        lv_obj_set_style_text_font(home_weather_day2_label_, &alibaba_puhui_14, 0);
+        lv_obj_set_style_text_color(home_weather_day2_label_, lv_color_black(), 0);
+        lv_label_set_text(home_weather_day2_label_, "后天");
+
+        home_weather_icon2_label_ = lv_label_create(col2);
+        lv_obj_set_style_text_font(home_weather_icon2_label_, &font_awesome_16_4, 0);
+        lv_obj_set_style_text_color(home_weather_icon2_label_, lv_color_black(), 0);
+        lv_label_set_text(home_weather_icon2_label_, "");
+
+        home_weather_temp2_label_ = lv_label_create(col2);
+        lv_obj_set_style_text_font(home_weather_temp2_label_, &alibaba_puhui_14, 0);
+        lv_obj_set_style_text_color(home_weather_temp2_label_, lv_color_black(), 0);
+        lv_label_set_text(home_weather_temp2_label_, "--°C");
+
+        home_weather_desc2_label_ = lv_label_create(col2);
+        lv_obj_set_style_text_font(home_weather_desc2_label_, &alibaba_puhui_14, 0);
+        lv_obj_set_style_text_color(home_weather_desc2_label_, lv_color_black(), 0);
+        lv_label_set_text(home_weather_desc2_label_, "--");
+    }
+
+    // ====================== 课程区 ======================
+    // 使用 flex_grow 填充剩余空间，自动适配内容
+    auto* course_area = lv_obj_create(main_area);
+    lv_obj_set_width(course_area, LV_HOR_RES);
+    lv_obj_set_flex_grow(course_area, 1);
+    lv_obj_set_style_radius(course_area, 0, 0);
+    lv_obj_set_style_bg_color(course_area, lv_color_white(), 0);
+    lv_obj_set_style_border_width(course_area, 0, 0);  // 无边框，由内部分隔线区分
+    lv_obj_set_style_pad_left(course_area, 14, 0);
+    lv_obj_set_style_pad_right(course_area, 14, 0);
+    lv_obj_set_style_pad_top(course_area, 0, 0);
+    lv_obj_set_style_pad_bottom(course_area, 0, 0);
+    lv_obj_set_style_pad_row(course_area, 2, 0);
+    lv_obj_set_scrollbar_mode(course_area, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_set_flex_flow(course_area, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(course_area, LV_FLEX_ALIGN_START,
+                          LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER);
+
+    // 今日课程标题（14号字）
+    home_today_title_label_ = lv_label_create(course_area);
+    lv_obj_set_width(home_today_title_label_, LV_HOR_RES - 28);
+    lv_obj_set_style_text_font(home_today_title_label_, &alibaba_puhui_14, 0);
+    lv_obj_set_style_text_color(home_today_title_label_, lv_color_black(), 0);
+    lv_label_set_text(home_today_title_label_, "今日课程");
+
+    // 今日课程内容（14号字）
+    home_today_courses_label_ = lv_label_create(course_area);
+    lv_obj_set_width(home_today_courses_label_, LV_HOR_RES - 28);
+    lv_obj_set_style_text_font(home_today_courses_label_, &alibaba_puhui_14, 0);
+    lv_obj_set_style_text_color(home_today_courses_label_, lv_color_black(), 0);
+    lv_label_set_long_mode(home_today_courses_label_, LV_LABEL_LONG_WRAP);
+    lv_label_set_text(home_today_courses_label_, "未配置课程表");
+
+    // ===== 分隔线（今日课程和明日课程之间）=====
+    auto* course_divider = lv_obj_create(course_area);
+    lv_obj_set_size(course_divider, LV_HOR_RES - 28, 1);
+    lv_obj_set_style_radius(course_divider, 0, 0);
+    lv_obj_set_style_bg_color(course_divider, lv_color_black(), 0);
+    lv_obj_set_style_border_width(course_divider, 0, 0);
+    lv_obj_set_style_pad_all(course_divider, 0, 0);
+
+    // 明日课程标题（14号字）
+    home_tomorrow_title_label_ = lv_label_create(course_area);
+    lv_obj_set_width(home_tomorrow_title_label_, LV_HOR_RES - 28);
+    lv_obj_set_style_text_font(home_tomorrow_title_label_, &alibaba_puhui_14, 0);
+    lv_obj_set_style_text_color(home_tomorrow_title_label_, lv_color_black(), 0);
+    lv_label_set_text(home_tomorrow_title_label_, "明日课程");
+
+    // 明日课程内容（14号字）
+    home_tomorrow_courses_label_ = lv_label_create(course_area);
+    lv_obj_set_width(home_tomorrow_courses_label_, LV_HOR_RES - 28);
+    lv_obj_set_style_text_font(home_tomorrow_courses_label_, &alibaba_puhui_14, 0);
+    lv_obj_set_style_text_color(home_tomorrow_courses_label_, lv_color_black(), 0);
+    lv_label_set_long_mode(home_tomorrow_courses_label_, LV_LABEL_LONG_WRAP);
+    lv_label_set_text(home_tomorrow_courses_label_, "未配置课程表");
+
+    // ====================== 底部状态条 ======================
+    auto* bottom_strip = lv_obj_create(main_area);
+    lv_obj_set_size(bottom_strip, LV_HOR_RES, 24);
+    lv_obj_set_style_radius(bottom_strip, 0, 0);
+    lv_obj_set_style_bg_color(bottom_strip, lv_color_white(), 0);
+    lv_obj_set_style_border_width(bottom_strip, 1, 0);
+    lv_obj_set_style_border_side(bottom_strip, LV_BORDER_SIDE_TOP, 0);  // 只有顶部边框
+    lv_obj_set_style_border_color(bottom_strip, lv_color_black(), 0);
+    lv_obj_set_style_pad_left(bottom_strip, 14, 0);
+    lv_obj_set_style_pad_right(bottom_strip, 14, 0);
+    lv_obj_set_style_pad_top(bottom_strip, 4, 0);
+    lv_obj_set_style_pad_bottom(bottom_strip, 4, 0);
+    lv_obj_set_scrollbar_mode(bottom_strip, LV_SCROLLBAR_MODE_OFF);
+
+    home_bottom_status_label_ = lv_label_create(bottom_strip);
+    lv_obj_set_width(home_bottom_status_label_, LV_HOR_RES - 28);
+    lv_obj_set_style_text_font(home_bottom_status_label_, &alibaba_puhui_16, 0);
+    lv_obj_set_style_text_color(home_bottom_status_label_, lv_color_black(), 0);
+    lv_obj_set_style_text_align(home_bottom_status_label_, LV_TEXT_ALIGN_LEFT, 0);
+    lv_label_set_text(home_bottom_status_label_,
+                      std::string("小智: ").append(Lang::Strings::STANDBY).c_str());
+
+    // ====================== 初始化顶栏数据 ======================
+    // 主页的顶栏不显示时间，所以 datetime_label 传 nullptr
+    UpdateTopBar(home_top_temp_label_, home_top_humidity_label_,
+                 nullptr, home_top_battery_label_);
+
+    // ====================== 创建定时刷新器（60 秒周期）======================
+    if (home_refresh_timer_ == nullptr) {
+        home_refresh_timer_ = lv_timer_create(HomeRefreshTimerCb, 60000, this);
+        // 一发定时器：首次天气数据获取后快速刷新 UI（不等 60s）
+        lv_timer_create([](lv_timer_t* t) {
+            auto* self = static_cast<CustomLcdDisplay*>(lv_timer_get_user_data(t));
+            self->UpdateHomePage();
+            lv_timer_del(t);
+        }, 8000, this);
+    }
+
+    // 隐藏页面，等 SwitchPage(kHome) 时再显示
     lv_obj_add_flag(home_page_, LV_OBJ_FLAG_HIDDEN);
 }
 
@@ -750,6 +1078,9 @@ void CustomLcdDisplay::TopBarTimerCb(lv_timer_t* timer) {
     }
     self->UpdateTopBar(self->wifi_config_temp_label_, self->wifi_config_humidity_label_, nullptr, self->wifi_config_battery_label_);
     self->UpdateTopBar(self->activation_temp_label_, self->activation_humidity_label_, self->activation_datetime_label_, self->activation_battery_label_);
+    // 同步更新主页顶栏的温度/湿度/电池（主页不显示时间，datetime_label 传 nullptr）
+    self->UpdateTopBar(self->home_top_temp_label_, self->home_top_humidity_label_,
+                       nullptr, self->home_top_battery_label_);
 }
 
 void CustomLcdDisplay::UpdateTopBar(lv_obj_t* temp_label, lv_obj_t* humidity_label, lv_obj_t* datetime_label, lv_obj_t* battery_label) {
@@ -855,9 +1186,244 @@ void CustomLcdDisplay::UpdateWifiConfigPage() {
 
 void CustomLcdDisplay::UpdateHomeStatus(const char* status) {
     last_status_text_ = status != nullptr ? status : "";
-    if (home_status_label_ != nullptr) {
-        lv_label_set_text(home_status_label_,
-            last_status_text_.empty() ? Lang::Strings::STANDBY : last_status_text_.c_str());
+    std::string display_text = "小智: ";
+    display_text += last_status_text_.empty() ? Lang::Strings::STANDBY : last_status_text_;
+    if (home_bottom_status_label_ != nullptr) {
+        lv_label_set_text(home_bottom_status_label_, display_text.c_str());
+    }
+}
+
+// ============================================================================
+// 首页数据刷新
+// ============================================================================
+
+/**
+ * @brief 定时器回调：周期性刷新首页数据
+ *
+ * 每 60 秒被 LVGL 定时器调用，更新课程表和天气数据。
+ * 内部调用 UpdateHomePage() 完成实际的数据读取与 UI 刷新。
+ */
+void CustomLcdDisplay::HomeRefreshTimerCb(lv_timer_t* timer) {
+    auto* self = timer != nullptr
+        ? static_cast<CustomLcdDisplay*>(lv_timer_get_user_data(timer))
+        : nullptr;
+    if (self == nullptr) {
+        return;
+    }
+    self->UpdateHomePage();
+}
+
+/**
+ * @brief 从 HomeDataStore 读取最新数据并刷新首页所有标签
+ *
+ * 刷新内容包括：
+ * - 时间条：日期（"今天 周四"）+ 大字时钟（"12:33"）
+ * - 三日天气：今日/明日/后天天气描述和温度
+ * - 今日/明日课程：显示课程名称列表
+ * - 天气数据通过 RefreshWeather() 异步触发（带 30 分钟缓存）
+ */
+void CustomLcdDisplay::UpdateHomePage() {
+    if (home_data_store_ == nullptr) {
+        return;
+    }
+
+    // —— 更新课程表（UpdateSchedule 会根据当前日期推算今日/明日课程）——
+    home_data_store_->UpdateSchedule();
+
+    // —— 触发天气刷新（在后台任务中执行，避免阻塞 LVGL）——
+    // RefreshWeather() 内部有 30 分钟缓存检查，去掉一次性标志以支持定时重试
+    static bool s_weather_task_running = false;
+    
+    if (!s_weather_task_running && home_data_store_->HasWeatherConfig()) {
+        time_t now = time(nullptr);
+        struct tm time_info = {};
+        bool time_valid = (localtime_r(&now, &time_info) != nullptr && time_info.tm_year >= 2025 - 1900);
+        
+        if (time_valid) {
+            s_weather_task_running = true;
+            xTaskCreatePinnedToCore(
+                [](void* arg) {
+                    auto* store = static_cast<HomeDataStore*>(arg);
+                    ESP_LOGI("WeatherTask", "Weather fetch running...");
+                    store->RefreshWeather();
+                    ESP_LOGI("WeatherTask", "Weather fetch done");
+                    s_weather_task_running = false;
+                    vTaskDelete(nullptr);
+                },
+                "weather_fetch", 16384, home_data_store_, 5, nullptr, 0
+            );
+        }
+    }
+
+    const HomeData& data = home_data_store_->GetHomeData();
+
+    // ====================== 时间条 ======================
+    time_t now = time(nullptr);
+    struct tm time_info = {};
+    bool time_valid = (now > 0) &&
+                      (localtime_r(&now, &time_info) != nullptr) &&
+                      (time_info.tm_year >= 2025 - 1900);
+
+    if (time_valid) {
+        // 日期行："今天 周四"
+        const char* wday_names[] = {"周日", "周一", "周二", "周三",
+                                     "周四", "周五", "周六"};
+        char date_buf[32];
+        snprintf(date_buf, sizeof(date_buf), "%d月%d日 %s",
+                 time_info.tm_mon + 1, time_info.tm_mday,
+                 wday_names[time_info.tm_wday]);
+        if (home_date_label_ != nullptr) {
+            lv_label_set_text(home_date_label_, date_buf);
+        }
+
+        // 大字时钟："12:33"
+        char clock_buf[16];
+        snprintf(clock_buf, sizeof(clock_buf), "%02d:%02d",
+                 time_info.tm_hour, time_info.tm_min);
+        if (home_clock_label_ != nullptr) {
+            lv_label_set_text(home_clock_label_, clock_buf);
+        }
+    }
+
+    // ====================== 三日天气（4行/列：日期+图标+温度+描述）======================
+    // 辅助：设置一列天气
+    auto set_weather_col = [](lv_obj_t* day_l, lv_obj_t* icon_l, lv_obj_t* temp_l,
+                               lv_obj_t* desc_l, const WeatherDay& w, const char* day_text) {
+        if (w.description.empty() && w.high_temp.empty()) {
+            if (day_l) lv_label_set_text(day_l, day_text);
+            if (icon_l) lv_label_set_text(icon_l, "");
+            if (temp_l) lv_label_set_text(temp_l, "--°C");
+            if (desc_l) lv_label_set_text(desc_l, "--");
+            return;
+        }
+        if (day_l) lv_label_set_text(day_l, day_text);
+        if (icon_l) lv_label_set_text(icon_l, get_weather_icon(w.description));
+        if (temp_l) {
+            char tbuf[32];
+            snprintf(tbuf, sizeof(tbuf), "%s°C-%s°C",
+                     w.low_temp.c_str(), w.high_temp.c_str());
+            lv_label_set_text(temp_l, tbuf);
+        }
+        if (desc_l) lv_label_set_text(desc_l, w.description.c_str());
+    };
+
+    set_weather_col(home_weather_day0_label_, home_weather_icon0_label_,
+                    home_weather_temp0_label_, home_weather_desc0_label_,
+                    data.weather[0], "今天");
+    set_weather_col(home_weather_day1_label_, home_weather_icon1_label_,
+                    home_weather_temp1_label_, home_weather_desc1_label_,
+                    data.weather[1], "明天");
+    set_weather_col(home_weather_day2_label_, home_weather_icon2_label_,
+                    home_weather_temp2_label_, home_weather_desc2_label_,
+                    data.weather[2], "后天");
+
+    // 天气数据诊断
+    ESP_LOGI(TAG, "Weather: d0=%s(%s/%s) d1=%s(%s/%s) d2=%s(%s/%s)",
+             data.weather[0].description.c_str(), data.weather[0].low_temp.c_str(), data.weather[0].high_temp.c_str(),
+             data.weather[1].description.c_str(), data.weather[1].low_temp.c_str(), data.weather[1].high_temp.c_str(),
+             data.weather[2].description.c_str(), data.weather[2].low_temp.c_str(), data.weather[2].high_temp.c_str());
+
+    // ====================== 今日课程 ======================
+    // 根据原型：周末显示 "周末愉快! :-D"，工作日显示课程列表
+    if (home_today_title_label_ != nullptr) {
+        // 显示单双周信息
+        if (data.has_schedule) {
+            time_t now = time(nullptr);
+            bool is_dual = home_data_store_->IsDualWeek(now);
+            const char* week_str = is_dual ? "双周" : "单周";
+            
+            struct tm time_info = {};
+            bool is_weekend = false;
+            if (localtime_r(&now, &time_info) != nullptr) {
+                is_weekend = (time_info.tm_wday == 0 || time_info.tm_wday == 6);
+            }
+            
+            char title_buf[48];
+            snprintf(title_buf, sizeof(title_buf), "今日课程（%s）：", week_str);
+            lv_label_set_text(home_today_title_label_, title_buf);
+        } else {
+            lv_label_set_text(home_today_title_label_, "今日课程");
+        }
+    }
+
+    if (home_today_courses_label_ != nullptr) {
+        if (!data.has_schedule) {
+            lv_label_set_text(home_today_courses_label_, "未配置课程表");
+        } else if (data.today_schedule.courses.empty()) {
+            lv_label_set_text(home_today_courses_label_, "周末愉快! :-D");
+        } else {
+            // 分组：上午(1-4节)、下午(5-8节)
+            std::string am_str, pm_str;
+            for (const auto& c : data.today_schedule.courses) {
+                char buf[32];
+                snprintf(buf, sizeof(buf), "%d.%s",
+                         c.period <= 4 ? c.period : c.period - 4,
+                         c.name.c_str());
+                if (c.period <= 4) {
+                    if (!am_str.empty()) am_str += " ";
+                    am_str += buf;
+                } else {
+                    if (!pm_str.empty()) pm_str += " ";
+                    pm_str += buf;
+                }
+            }
+            std::string result;
+            if (!am_str.empty()) result += "上午：" + am_str;
+            if (!pm_str.empty()) {
+                if (!result.empty()) result += "\n";
+                result += "下午：" + pm_str;
+            }
+            lv_label_set_text(home_today_courses_label_, result.c_str());
+        }
+    }
+
+    // ====================== 明日课程 ======================
+    // 根据原型：周末/休息日显示 "好好休息 ^_^"，工作日显示课程列表
+    if (home_tomorrow_title_label_ != nullptr) {
+        if (data.has_schedule) {
+            // 明天的单双周可能和今天不同（跨周时）
+            time_t now = time(nullptr);
+            time_t tomorrow = now + 86400;  // 加一天
+            bool is_dual_tomorrow = home_data_store_->IsDualWeek(tomorrow);
+            const char* week_str = is_dual_tomorrow ? "双周" : "单周";
+            
+            char title_buf[48];
+            snprintf(title_buf, sizeof(title_buf), "明日课程（%s）：", week_str);
+            lv_label_set_text(home_tomorrow_title_label_, title_buf);
+        } else {
+            lv_label_set_text(home_tomorrow_title_label_, "明日课程");
+        }
+    }
+
+    if (home_tomorrow_courses_label_ != nullptr) {
+        if (!data.has_schedule) {
+            lv_label_set_text(home_tomorrow_courses_label_, "未配置课程表");
+        } else if (data.tomorrow_schedule.courses.empty()) {
+            lv_label_set_text(home_tomorrow_courses_label_, "好好休息 ^_^");
+        } else {
+            // 分组：上午(1-4节)、下午(5-8节)
+            std::string am_str, pm_str;
+            for (const auto& c : data.tomorrow_schedule.courses) {
+                char buf[32];
+                snprintf(buf, sizeof(buf), "%d.%s",
+                         c.period <= 4 ? c.period : c.period - 4,
+                         c.name.c_str());
+                if (c.period <= 4) {
+                    if (!am_str.empty()) am_str += " ";
+                    am_str += buf;
+                } else {
+                    if (!pm_str.empty()) pm_str += " ";
+                    pm_str += buf;
+                }
+            }
+            std::string result;
+            if (!am_str.empty()) result += "上午：" + am_str;
+            if (!pm_str.empty()) {
+                if (!result.empty()) result += "\n";
+                result += "下午：" + pm_str;
+            }
+            lv_label_set_text(home_tomorrow_courses_label_, result.c_str());
+        }
     }
 }
 
@@ -930,6 +1496,7 @@ void CustomLcdDisplay::SetStatus(const char* status) {
         UpdateActivationCode(nullptr);
     } else if (strcmp(safe_status, Lang::Strings::STANDBY) == 0) {
         SwitchPage(UiPage::kHome);
+        UpdateHomePage();  // 立即刷新首页数据，不等 60s 定时器
     }
 
     if (current_page_ == UiPage::kHome) {

@@ -18,6 +18,7 @@ set(SOURCES "audio/audio_codec.cc"
             "display/oled_display.cc"
             "display/lvgl_display/lvgl_display.cc"
             "display/emote_display.cc"
+            "display/home_data_store.cc"
             "display/lvgl_display/emoji_collection.cc"
             "display/lvgl_display/lvgl_theme.cc"
             "display/lvgl_display/lvgl_font.cc"
@@ -31,11 +32,11 @@ set(SOURCES "audio/audio_codec.cc"
             "protocols/websocket_protocol.cc"
             "mcp_server.cc"
             "system_info.cc"
+            "device_state_machine.cc"
+            "assets.cc"
             "application.cc"
             "ota.cc"
             "settings.cc"
-            "device_state_machine.cc"
-            "assets.cc"
             "main.cc"
             )
 
@@ -902,6 +903,7 @@ idf_component_register(SRCS ${SOURCES}
                         esp_pm
                         esp_psram
                         esp_netif
+                        esp_http_client
                         esp_driver_gpio
                         esp_driver_uart
                         esp_driver_spi
