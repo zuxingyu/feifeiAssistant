@@ -899,7 +899,7 @@ void CustomLcdDisplay::CreateMusicPage(lv_obj_t* screen) {
         nullptr,
         &music_battery_label_,
         true,   // show datetime
-        false,  // no wifi icon (music page)
+        true,    // show wifi icon
         true);  // show battery
 
     auto* main_area = lv_obj_create(music_page_);
@@ -1314,7 +1314,7 @@ void CustomLcdDisplay::UpdateTopBar(lv_obj_t* temp_label, lv_obj_t* humidity_lab
         bool time_valid = (now > 0) && (localtime_r(&now, &time_info) != nullptr) && (time_info.tm_year >= 2025 - 1900);
         if (time_valid) {
             char datetime_buf[48];
-            strftime(datetime_buf, sizeof(datetime_buf), "%Y年%m月%d日 %H:%M  ", &time_info);
+            strftime(datetime_buf, sizeof(datetime_buf), "%m月%d日 %H:%M  ", &time_info);
             std::string datetime_with_gap = std::string(datetime_buf) + "  ";
             lv_label_set_text(datetime_label, datetime_with_gap.c_str());
         } else {
