@@ -1152,11 +1152,16 @@ void CustomLcdDisplay::SwitchPage(UiPage page) {
 }
 
 void CustomLcdDisplay::CyclePage() {
+    if (!Lock(30000)) {
+        ESP_LOGW(TAG, "CyclePage lock failed");
+        return;
+    }
     if (current_page_ == UiPage::kHome) {
         SwitchPage(UiPage::kMusic);
     } else if (current_page_ == UiPage::kMusic) {
         SwitchPage(UiPage::kHome);
     }
+    Unlock();
 }
 
 void CustomLcdDisplay::UpdateWifiConfigMessage(const char* message) {
