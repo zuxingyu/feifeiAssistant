@@ -916,13 +916,13 @@ void CustomLcdDisplay::CreateMusicPage(lv_obj_t* screen) {
 
     // —— 歌曲信息 ——
     auto* song_info = lv_obj_create(main_area);
-    lv_obj_set_size(song_info, LV_HOR_RES, 48);
+    lv_obj_set_size(song_info, LV_HOR_RES, 44);
     lv_obj_set_style_radius(song_info, 0, 0);
     lv_obj_set_style_bg_color(song_info, lv_color_white(), 0);
     lv_obj_set_style_border_width(song_info, 1, 0);
     lv_obj_set_style_border_side(song_info, LV_BORDER_SIDE_BOTTOM, 0);
     lv_obj_set_style_border_color(song_info, lv_color_black(), 0);
-    lv_obj_set_style_pad_all(song_info, 4, 0);
+    lv_obj_set_style_pad_all(song_info, 3, 0);
     lv_obj_set_scrollbar_mode(song_info, LV_SCROLLBAR_MODE_OFF);
     lv_obj_set_flex_flow(song_info, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(song_info, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
@@ -939,7 +939,7 @@ void CustomLcdDisplay::CreateMusicPage(lv_obj_t* screen) {
 
     // —— 进度条 ——
     auto* progress_area = lv_obj_create(main_area);
-    lv_obj_set_size(progress_area, LV_HOR_RES, 36);
+    lv_obj_set_size(progress_area, LV_HOR_RES, 40);
     lv_obj_set_style_radius(progress_area, 0, 0);
     lv_obj_set_style_bg_color(progress_area, lv_color_white(), 0);
     lv_obj_set_style_border_width(progress_area, 1, 0);
@@ -947,12 +947,13 @@ void CustomLcdDisplay::CreateMusicPage(lv_obj_t* screen) {
     lv_obj_set_style_border_color(progress_area, lv_color_black(), 0);
     lv_obj_set_style_pad_left(progress_area, 14, 0);
     lv_obj_set_style_pad_right(progress_area, 14, 0);
-    lv_obj_set_style_pad_top(progress_area, 6, 0);
+    lv_obj_set_style_pad_top(progress_area, 4, 0);
     lv_obj_set_scrollbar_mode(progress_area, LV_SCROLLBAR_MODE_OFF);
 
-    // 进度条背景
+    // 进度条背景（居中放置）
     music_progress_bar_ = lv_obj_create(progress_area);
-    lv_obj_set_size(music_progress_bar_, LV_HOR_RES - 28, 8);
+    lv_obj_set_size(music_progress_bar_, LV_HOR_RES - 28, 6);
+    lv_obj_align(music_progress_bar_, LV_ALIGN_TOP_MID, 0, 4);
     lv_obj_set_style_radius(music_progress_bar_, 0, 0);
     lv_obj_set_style_bg_color(music_progress_bar_, lv_color_white(), 0);
     lv_obj_set_style_border_width(music_progress_bar_, 1, 0);
@@ -969,7 +970,7 @@ void CustomLcdDisplay::CreateMusicPage(lv_obj_t* screen) {
     lv_obj_set_style_pad_all(music_progress_fill_, 0, 0);
     lv_obj_align(music_progress_fill_, LV_ALIGN_LEFT_MID, 0, 0);
 
-    // 时间标签
+    // 时间标签（进度条下方）
     music_time_cur_label_ = lv_label_create(progress_area);
     lv_obj_set_style_text_font(music_time_cur_label_, &alibaba_puhui_14, 0);
     lv_obj_set_style_text_color(music_time_cur_label_, lv_color_black(), 0);
@@ -984,11 +985,11 @@ void CustomLcdDisplay::CreateMusicPage(lv_obj_t* screen) {
 
     // —— 控制按钮（用 Font Awesome 图标） ——
     auto* controls = lv_obj_create(main_area);
-    lv_obj_set_size(controls, LV_HOR_RES, 42);
+    lv_obj_set_size(controls, LV_HOR_RES, 36);
     lv_obj_set_style_radius(controls, 0, 0);
     lv_obj_set_style_bg_color(controls, lv_color_white(), 0);
     lv_obj_set_style_border_width(controls, 0, 0);
-    lv_obj_set_style_pad_all(controls, 4, 0);
+    lv_obj_set_style_pad_all(controls, 2, 0);
     lv_obj_set_scrollbar_mode(controls, LV_SCROLLBAR_MODE_OFF);
     lv_obj_set_flex_flow(controls, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(controls, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
@@ -997,18 +998,19 @@ void CustomLcdDisplay::CreateMusicPage(lv_obj_t* screen) {
     lv_obj_t* btn_prev = lv_label_create(controls);
     lv_obj_set_style_text_font(btn_prev, &font_awesome_16_4, 0);
     lv_obj_set_style_text_color(btn_prev, lv_color_black(), 0);
-    lv_obj_set_style_margin_right(btn_prev, 16, 0);
+    lv_obj_set_style_pad_right(btn_prev, 14, 0);
     lv_label_set_text(btn_prev, FONT_AWESOME_BACKWARD_STEP);
 
     lv_obj_t* btn_play = lv_label_create(controls);
     lv_obj_set_style_text_font(btn_play, &font_awesome_16_4, 0);
     lv_obj_set_style_text_color(btn_play, lv_color_black(), 0);
+    lv_obj_set_style_pad_hor(btn_play, 8, 0);
     lv_label_set_text(btn_play, FONT_AWESOME_PLAY);
 
     lv_obj_t* btn_next = lv_label_create(controls);
     lv_obj_set_style_text_font(btn_next, &font_awesome_16_4, 0);
     lv_obj_set_style_text_color(btn_next, lv_color_black(), 0);
-    lv_obj_set_style_margin_left(btn_next, 16, 0);
+    lv_obj_set_style_pad_left(btn_next, 14, 0);
     lv_label_set_text(btn_next, FONT_AWESOME_FORWARD_STEP);
 
     // —— 歌词区 ——
