@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>小智AI · 配网设置</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:linear-gradient(135deg,#667eea,#764ba2);min-height:100vh;display:flex;justify-content:center;align-items:flex-start;font-family:-apple-system,'PingFang SC','Microsoft YaHei',sans-serif;padding:15px}
+.shell{background:#fff;border-radius:18px;box-shadow:0 20px 60px rgba(0,0,0,.3);width:100%;max-width:420px;overflow:hidden;margin-top:10px}
+.header{background:linear-gradient(135deg,#667eea,#764ba2);color:#fff;padding:28px 25px;text-align:center}
+.header-icon{font-size:36px;margin-bottom:8px}
+.header h1{font-size:20px;margin-bottom:4px}.header p{font-size:12px;opacity:.85}
+.bar{display:flex;justify-content:center;align-items:center;padding:14px 0;background:#f8f9fa;gap:0}
+.st{display:flex;align-items:center;gap:4px;font-size:11px;color:#bbb;transition:color .3s}
+.st.on{color:#667eea;font-weight:700}
+.st.ok{color:#4caf50}
+.stn{width:20px;height:20px;border-radius:50%;background:#ddd;color:#fff;display:flex;align-items:center;justify-content:center;font-size:10px;transition:background .3s}
+.st.on .stn{background:#667eea}
+.st.ok .stn{background:#4caf50}
+.stl{width:28px;height:2px;background:#ddd;margin:0 4px;transition:background .3s}
+.st.ok+.stl{background:#4caf50}
+.sec{display:none;padding:25px}
+.sec.on{display:block}
+.wfl h3,.stt{font-size:13px;color:#666;margin-bottom:10px}
+.wi{display:flex;align-items:center;padding:11px 14px;border:2px solid #e0e0e0;border-radius:10px;margin-bottom:7px;cursor:pointer;transition:all .2s}
+.wi:active,.wi.sel{border-color:#667eea;background:#f5f7ff}
+.wii{font-size:18px;margin-right:10px;flex-shrink:0}
+.win{flex:1;min-width:0}
+.wn{font-size:14px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ws{font-size:11px;color:#999;margin-top:2px}
+.wic{font-size:16px;color:#667eea;display:none;flex-shrink:0}
+.wi.sel .wic{display:block}
+.ig{margin-bottom:14px}
+.ig label{display:block;font-size:12px;color:#666;margin-bottom:5px}
+.ig input{width:100%;padding:11px 14px;border:2px solid #e0e0e0;border-radius:10px;font-size:14px;-webkit-appearance:none}
+.ig input:focus{outline:none;border-color:#667eea}
+.ld{text-align:center;color:#999;padding:12px;font-size:13px}
+.err{color:#e74c3c;font-size:13px;text-align:center;padding:8px;display:none;margin-top:10px}
+.toast{position:fixed;top:20px;left:50%;transform:translateX(-50%);background:#333;color:#fff;padding:10px 20px;border-radius:20px;font-size:13px;z-index:999;opacity:0;transition:opacity .3s;pointer-events:none}
+.toast.show{opacity:1}
+.ba{display:flex;gap:10px;margin-top:20px}
+.btn{flex:1;padding:13px;border:none;border-radius:10px;font-size:14px;font-weight:700;cursor:pointer;transition:all .2s}
+.btn:active{transform:scale(.97)}
+.bp{background:#f0f0f0;color:#666}
+.bn{background:linear-gradient(135deg,#667eea,#764ba2);color:#fff}
+.bn:disabled{opacity:.5;transform:none}
+.bs{background:linear-gradient(135deg,#00c6ff,#0072ff);color:#fff}
+.wt{display:flex;gap:6px;margin-bottom:12px}
+.wb{flex:1;padding:8px;border:2px solid #e0e0e0;background:#fff;border-radius:8px;font-size:12px;cursor:pointer;text-align:center}
+.wb.on{border-color:#667eea;background:#f5f7ff;color:#667eea;font-weight:700}
+.tb{width:100%;border-collapse:collapse;margin-bottom:8px}
+.tb th{font-size:11px;color:#666;padding:6px 2px;background:#f8f9fa;border:1px solid #eee}
+.tb td{border:1px solid #eee;padding:2px}
+.tb input{width:100%;border:none;padding:6px 3px;font-size:11px;text-align:center;background:transparent}
+.tb input:focus{outline:none;background:#f5f7ff}
+.pl{font-size:10px;color:#999;text-align:center;width:28px}
+.cpb{font-size:11px;color:#667eea;text-decoration:underline;cursor:pointer;margin-left:8px}
+.ib{background:#f5f0ff;border:1px solid #d4c4f0;border-radius:10px;padding:12px;margin-bottom:18px;font-size:12px;color:#666;line-height:1.6}
+.su{background:#f8f9fa;border-radius:10px;padding:15px;margin-bottom:18px;text-align:left}
+.si{display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid #e0e0e0;font-size:13px}
+.si:last-child{border-bottom:none}
+.sl{color:#666}.sv{color:#333;font-weight:500}
+.ns{background:#e8f4ff;border-radius:10px;padding:13px;margin-bottom:18px;text-align:left;font-size:12px;color:#333;line-height:1.8}
+.ok{font-size:50px;margin-bottom:12px}
+.rf{font-size:12px;color:#667eea;text-decoration:underline;cursor:pointer;float:right;margin-top:-24px}
+</style>
+</head>
+<body>
+<div class="shell">
+  <div class="header">
+    <div class="header-icon" id="hicon">📡</div>
+    <h1>小智AI 智能助手</h1>
+    <p id="hsub">首次配置</p>
+  </div>
+  <div class="bar">
+    <div class="st on" id="s1"><div class="stn">1</div><span>WiFi</span></div><div class="stl"></div>
+    <div class="st" id="s2"><div class="stn">2</div><span>课程</span></div><div class="stl"></div>
+    <div class="st" id="s3"><div class="stn">3</div><span>天气</span></div><div class="stl"></div>
+    <div class="st" id="s4"><div class="stn">4</div><span>完成</span></div>
+  </div>
+
+  <!-- /1/ WiFi -->
+  <div class="sec on" id="c1">
+    <div class="wfl"><h3>选择WiFi <span class="rf" onclick="scn()">🔄 刷新</span></h3><div id="apl"><div class="ld">正在扫描...</div></div></div>
+    <div class="ig"><label>WiFi密码</label><input type="password" id="pw" placeholder="请输入WiFi密码"></div>
+    <div class="ba"><button class="btn bn" id="wb" disabled onclick="swf()">下一步 →</button></div>
+  </div>
+
+  <!-- /2/ Schedule -->
+  <div class="sec" id="c2">
+    <div class="ig"><label>学期开始</label><input type="date" id="ss"></div>
+    <div class="ig"><label>学期结束</label><input type="date" id="se"></div>
+    <div class="wt"><button class="wb on" onclick="swk('single')">📅 单周</button><button class="wb" onclick="swk('double')">📅 双周 <span class="cpb" onclick="cpd()">复制单周</span></button></div>
+    <div id="ed"></div>
+    <div class="err" id="e2"></div>
+    <div class="ba"><button class="btn bp" onclick="gs(1)">← 上一步</button><button class="btn bn" id="sb" onclick="ssv()">下一步 →</button></div>
+  </div>
+
+  <!-- /3/ Weather -->
+  <div class="sec" id="c3">
+    <div class="ib">请到 <b>心和天气</b> (seniverse.com) 注册免费账号获取 API 私钥。免费版每日400次。</div>
+    <div class="ig"><label>API 私钥 <span style="font-size:11px;color:#999">必填</span></label><input type="text" id="ak" placeholder="请输入心和天气 API 私钥"></div>
+    <div class="ig"><label>城市 <span style="font-size:11px;color:#999">默认IP定位</span></label><input type="text" id="ct" placeholder="例如: 北京、上海"></div>
+    <div class="err" id="e3"></div>
+    <div class="ba"><button class="btn bp" onclick="gs(2)">← 上一步</button><button class="btn bn" id="web" onclick="swv()">下一步 →</button></div>
+  </div>
+
+  <!-- /4/ Done -->
+  <div class="sec" id="c4">
+    <div style="text-align:center"><div class="ok">✅</div><h2 style="font-size:18px;margin-bottom:8px">配置完成!</h2><p style="font-size:13px;color:#666;margin-bottom:16px">确认后设备将连接网络并进入主页</p></div>
+    <div class="su" id="sum"><div style="text-align:center;color:#999;font-size:13px">加载中...</div></div>
+    <div class="ns">设备联网后主页将显示时间、天气和课程。<br>按 BOOT 键可唤醒小智AI对话。</div>
+    <div class="ba"><button class="btn bp" onclick="gs(3)">← 上一步</button><button class="btn bs" id="fb" onclick="fin()">✅ 完成启动</button></div>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+var cur=1;
+function gs(n){
+  if(n<1||n>4)return;
+  if(cur===2)cl();
+  for(var i=1;i<=4;i++){var e=document.getElementById('s'+i);e.classList.remove('on','ok');if(i<n)e.classList.add('ok');if(i===n)e.classList.add('on')}
+  document.querySelectorAll('.sec').forEach(function(s){s.classList.remove('on')});
+  document.getElementById('c'+n).classList.add('on');
+  var ic=['📡','📅','🌤️','🚀'];document.getElementById('hicon').textContent=ic[n-1];
+  document.getElementById('hsub').textContent='设置 · 第'+n+'步';document.body.style.background='linear-gradient(135deg,'+(['#667eea,#764ba2','#11998e,#38ef7d','#ee0979,#ff6a00','#00c6ff,#0072ff'][n-1])+')';cur=n;
+  if(n===4)ls();
+}
+function ts(m){var t=document.getElementById('toast');t.textContent=m;t.classList.add('show');setTimeout(function(){t.classList.remove('show')},2000)}
+
+// WiFi
+var ss='',ap=[];
+function scn(){document.getElementById('apl').innerHTML='<div class="ld">扫描中...</div>';
+  fetch('/scan').then(function(r){return r.json()}).then(function(d){ap=d.aps||[];var h='';
+    if(!ap.length){h='<div class="ld">未发现WiFi，请刷新</div>'}
+    ap.forEach(function(a,i){var ic=a.authmode>0?'🔒':'📶',sg=a.rssi>=-50?'很强':a.rssi>=-65?'强':a.rssi>=-75?'中':'弱';
+      h+='<div class="wi'+(i===0&&!ss?' sel':'')+'" onclick="pk(this,\''+a.ssid.replace(/'/g,"\\'")+'\')"><div class="wii">'+ic+'</div><div class="win"><div class="wn">'+a.ssid+'</div><div class="ws">'+sg+' ('+a.rssi+'dBm)</div></div><div class="wic">✓</div></div>'});
+    document.getElementById('apl').innerHTML=h;
+    if(ap.length&&!ss){ss=ap[0].ssid;document.getElementById('wb').disabled=false}})}
+function pk(e,v){document.querySelectorAll('.wi').forEach(function(i){i.classList.remove('sel')});e.classList.add('sel');ss=v;document.getElementById('wb').disabled=false}
+function swf(){if(!ss)return;var b=document.getElementById('wb');b.disabled=true;b.textContent='保存中...';
+  fetch('/api/wifi',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ssid:ss,password:document.getElementById('pw').value})})
+  .then(function(r){return r.json()}).then(function(j){if(j.success)gs(2);else{ts('保存失败');b.disabled=false;b.textContent='下一步 →'}})
+  .catch(function(){ts('网络错误');b.disabled=false;b.textContent='下一步 →'})}
+scn();
+
+// Schedule
+var wk='single',sd={single:null,double:null};
+function me(){var s={};for(var d=0;d<5;d++){s['day'+d]=['','','','','','','','']}return s}
+function es(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
+function rd(){
+  var s=sd[wk];if(!s){s=me();sd[wk]=s}
+  var h='<div class="stt">上午 (1-4节)</div><table class="tb"><thead><tr><th style="width:28px"></th><th>周一</th><th>周二</th><th>周三</th><th>周四</th><th>周五</th></tr></thead><tbody>';
+  for(var p=0;p<4;p++){h+='<tr><td class="pl">上'+(p+1)+'</td>';for(var d=0;d<5;d++){var v=(s['day'+d]&&s['day'+d][p])?s['day'+d][p]:'';h+='<td><input id="s_'+wk+'_'+d+'_'+p+'" value="'+es(v)+'"></td>'}h+='</tr>'}
+  h+='</tbody></table><div class="stt" style="margin-top:10px">下午 (5-8节)</div><table class="tb"><thead><tr><th style="width:28px"></th><th>周一</th><th>周二</th><th>周三</th><th>周四</th><th>周五</th></tr></thead><tbody>';
+  for(var p=4;p<8;p++){h+='<tr><td class="pl">下'+(p-3)+'</td>';for(var d=0;d<5;d++){var v=(s['day'+d]&&s['day'+d][p])?s['day'+d][p]:'';h+='<td><input id="s_'+wk+'_'+d+'_'+p+'" value="'+es(v)+'"></td>'}h+='</tr>'}
+  h+='</tbody></table>';document.getElementById('ed').innerHTML=h}
+function cl(){var s={};for(var d=0;d<5;d++){s['day'+d]=[];for(var p=0;p<8;p++){var e=document.getElementById('s_'+wk+'_'+d+'_'+p);s['day'+d].push(e?e.value.trim():'')}}sd[wk]=s}
+function swk(w){cl();wk=w;document.querySelectorAll('.wb').forEach(function(b){b.classList.remove('on')});if(w==='single')document.querySelectorAll('.wb')[0].classList.add('on');else document.querySelectorAll('.wb')[1].classList.add('on');rd()}
+function cpd(){cl();if(!sd.single){ts('请先填写单周课程');return}sd.double=JSON.parse(JSON.stringify(sd.single));swk('double');ts('已从单周复制')}
+function ssv(){cl();document.getElementById('e2').style.display='none';var b=document.getElementById('sb');b.disabled=true;b.textContent='保存中...';
+  var d={semester_start:document.getElementById('ss').value,semester_end:document.getElementById('se').value,schedule_single:sd.single||me(),schedule_double:sd.double||sd.single||me()};
+  fetch('/api/schedule',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)})
+  .then(function(r){return r.json()}).then(function(j){if(j.success){ts('课程表已保存');gs(3)}else{var e=document.getElementById('e2');e.textContent='保存失败';e.style.display='block';b.disabled=false;b.textContent='下一步 →'}})
+  .catch(function(){var e=document.getElementById('e2');e.textContent='网络错误';e.style.display='block';b.disabled=false;b.textContent='下一步 →'})}
+fetch('/api/config/status').then(function(r){return r.json()}).then(function(d){if(d.semester_start)document.getElementById('ss').value=d.semester_start;if(d.semester_end)document.getElementById('se').value=d.semester_end;if(d.schedule_single)sd.single=d.schedule_single;if(d.schedule_double)sd.double=d.schedule_double}).catch(function(){});rd();
+
+// Weather
+fetch('/api/config/status').then(function(r){return r.json()}).then(function(d){if(d.weather_key)document.getElementById('ak').value=d.weather_key;if(d.weather_city)document.getElementById('ct').value=d.weather_city}).catch(function(){});
+function swv(){document.getElementById('e3').style.display='none';var b=document.getElementById('web');b.disabled=true;b.textContent='保存中...';
+  var d={api_key:document.getElementById('ak').value.trim(),city:document.getElementById('ct').value.trim()};
+  fetch('/api/weather',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)})
+  .then(function(r){return r.json()}).then(function(j){if(j.success){ts('天气已保存');gs(4)}else{var e=document.getElementById('e3');e.textContent='保存失败';e.style.display='block';b.disabled=false;b.textContent='下一步 →'}})
+  .catch(function(){var e=document.getElementById('e3');e.textContent='网络错误';e.style.display='block';b.disabled=false;b.textContent='下一步 →'})}
+
+// Summary
+function ls(){fetch('/api/config/status').then(function(r){return r.json()}).then(function(d){
+    var h='<div class="si"><span class="sl">📡 课程表</span><span class="sv">'+(d.schedule_configured?'已配置':'未配置')+'</span></div>';
+    h+='<div class="si"><span class="sl">🌤️ 天气</span><span class="sv">'+(d.weather_city||(d.weather_configured?'已配置':'未配置'))+'</span></div>';
+    document.getElementById('sum').innerHTML=h}).catch(function(){document.getElementById('sum').innerHTML='加载失败'})}
+function fin(){var b=document.getElementById('fb');b.disabled=true;b.textContent='启动中...';
+  fetch('/api/finish',{method:'POST'}).then(function(){document.getElementById('c4').innerHTML='<div style="text-align:center"><div class="ok">🔄</div><h2 style="font-size:18px">设备正在重启...</h2><p style="font-size:13px;color:#666">请稍候，设备将自动连接WiFi并进入主页</p></div>'})
+  .catch(function(){b.disabled=false;b.textContent='✅ 完成启动'})}
+</script>
+</body>
+</html>

@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WiFi配置 - 小智AI</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-family: -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+            padding: 20px;
+        }
+        .container {
+            background: #fff;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            width: 100%;
+            max-width: 420px;
+            overflow: hidden;
+        }
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: #fff;
+            padding: 30px 25px;
+            text-align: center;
+        }
+        .header-icon { font-size: 40px; margin-bottom: 10px; }
+        .header h1 { font-size: 22px; margin-bottom: 5px; }
+        .header p { font-size: 13px; opacity: 0.9; }
+        .step-bar {
+            display: flex;
+            justify-content: center;
+            padding: 15px 0;
+            background: #f8f9fa;
+        }
+        .step { display: flex; align-items: center; gap: 5px; font-size: 12px; color: #999; }
+        .step.active { color: #667eea; font-weight: bold; }
+        .step.done { color: #4caf50; }
+        .step-num {
+            width: 22px; height: 22px; border-radius: 50%;
+            background: #ddd; color: #fff;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 11px;
+        }
+        .step.active .step-num { background: #667eea; }
+        .step.done .step-num { background: #4caf50; }
+        .step-connector { width: 30px; height: 2px; background: #ddd; margin: 0 5px; }
+        .body { padding: 25px; }
+        .wifi-list { margin-bottom: 15px; }
+        .wifi-list h3 { font-size: 13px; color: #666; margin-bottom: 10px; }
+        .wifi-item {
+            display: flex; align-items: center;
+            padding: 12px 15px; border: 2px solid #e0e0e0;
+            border-radius: 10px; margin-bottom: 8px;
+            cursor: pointer; transition: all 0.2s;
+        }
+        .wifi-item:hover { border-color: #667eea; background: #f5f7ff; }
+        .wifi-item.selected { border-color: #667eea; background: #f5f7ff; }
+        .wifi-item-icon { font-size: 20px; margin-right: 12px; }
+        .wifi-item-info { flex: 1; }
+        .wifi-item-name { font-size: 14px; font-weight: 500; }
+        .wifi-item-signal { font-size: 11px; color: #999; margin-top: 2px; }
+        .wifi-item-check { font-size: 18px; color: #667eea; display: none; }
+        .wifi-item.selected .wifi-item-check { display: block; }
+        .input-group { margin-bottom: 15px; }
+        .input-group label { display: block; font-size: 13px; color: #666; margin-bottom: 6px; }
+        .input-group input {
+            width: 100%; padding: 12px 15px;
+            border: 2px solid #e0e0e0; border-radius: 10px;
+            font-size: 14px; transition: border-color 0.2s;
+        }
+        .input-group input:focus { outline: none; border-color: #667eea; }
+        .loading { text-align: center; color: #999; padding: 10px; font-size: 13px; }
+        .error { color: #e74c3c; font-size: 13px; text-align: center; padding: 8px; display: none; }
+        .btn-area { display: flex; gap: 10px; margin-top: 20px; }
+        .btn {
+            flex: 1; padding: 14px; border: none;
+            border-radius: 10px; font-size: 15px;
+            font-weight: bold; cursor: pointer; transition: all 0.2s;
+        }
+        .btn-next {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: #fff;
+        }
+        .btn-next:hover { transform: translateY(-1px); box-shadow: 0 5px 15px rgba(102,126,234,0.4); }
+        .btn-next:disabled { opacity: 0.5; cursor: not-allowed; transform: none; box-shadow: none; }
+        .config-status {
+            margin-top: 20px; padding: 15px;
+            background: #f8f9fa; border-radius: 10px;
+            font-size: 12px; color: #666;
+        }
+        .config-status h4 { font-size: 12px; margin-bottom: 8px; color: #333; }
+        .status-row { display: flex; justify-content: space-between; padding: 5px 0; }
+        .status-ok { color: #4caf50; }
+        .status-no { color: #e74c3c; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="header-icon">📡</div>
+            <h1>小智AI 智能助手</h1>
+            <p>首次配置 · 第1步</p>
+        </div>
+
+        <div class="step-bar">
+            <div class="step active"><div class="step-num">1</div><span>WiFi</span></div>
+            <div class="step-connector"></div>
+            <div class="step"><div class="step-num">2</div><span>课程</span></div>
+            <div class="step-connector"></div>
+            <div class="step"><div class="step-num">3</div><span>天气</span></div>
+            <div class="step-connector"></div>
+            <div class="step"><div class="step-num">4</div><span>完成</span></div>
+        </div>
+
+        <div class="body">
+            <div class="wifi-list">
+                <h3>选择WiFi网络</h3>
+                <div id="ap_list"><div class="loading">正在扫描...</div></div>
+            </div>
+
+            <div class="input-group">
+                <label>WiFi密码</label>
+                <input type="password" id="password" placeholder="请输入WiFi密码">
+            </div>
+
+            <div class="error" id="error"></div>
+
+            <div class="btn-area">
+                <button class="btn btn-next" id="submit-btn" disabled onclick="submitWifi()">
+                    连接并下一步 →
+                </button>
+            </div>
+
+            <div class="config-status" id="config-status">
+                <h4>📋 当前配置状态</h4>
+                <div class="status-row">
+                    <span>📅 课程表</span>
+                    <span id="sched-status" class="status-no">加载中...</span>
+                </div>
+                <div class="status-row">
+                    <span>🌤️ 天气API</span>
+                    <span id="weather-status" class="status-no">加载中...</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let selectedSsid = '';
+        let aps = [];
+
+        // Load WiFi scan results
+        fetch('/scan')
+            .then(r => r.json())
+            .then(data => {
+                aps = data.aps || [];
+                let html = '';
+                if (aps.length === 0) {
+                    html = '<div class="loading">未发现WiFi网络，正在重新扫描...</div>';
+                    setTimeout(() => location.reload(), 3000);
+                }
+                aps.forEach((ap, i) => {
+                    let icon = ap.authmode > 0 ? '🔒' : '📶';
+                    let sig = ap.rssi >= -50 ? '很强' : ap.rssi >= -65 ? '强' : ap.rssi >= -75 ? '中' : '弱';
+                    html += '<div class="wifi-item' + (i===0?' selected':'') + '" onclick="selectAp(this,\'' + ap.ssid + '\')">';
+                    html += '<div class="wifi-item-icon">' + icon + '</div>';
+                    html += '<div class="wifi-item-info"><div class="wifi-item-name">' + ap.ssid + '</div>';
+                    html += '<div class="wifi-item-signal">信号: ' + sig + ' (' + ap.rssi + 'dBm)</div></div>';
+                    html += '<div class="wifi-item-check">✓</div></div>';
+                });
+                document.getElementById('ap_list').innerHTML = html;
+                if (aps.length > 0) {
+                    selectedSsid = aps[0].ssid;
+                    document.getElementById('submit-btn').disabled = false;
+                }
+            });
+
+        function selectAp(el, ssid) {
+            document.querySelectorAll('.wifi-item').forEach(i => i.classList.remove('selected'));
+            el.classList.add('selected');
+            selectedSsid = ssid;
+        }
+
+        function submitWifi() {
+            if (!selectedSsid) return;
+            document.getElementById('error').style.display = 'none';
+            document.getElementById('submit-btn').disabled = true;
+            document.getElementById('submit-btn').textContent = '连接中...';
+            fetch('/submit', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ssid: selectedSsid, password: document.getElementById('password').value})
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    window.location.href = '/schedule.html';
+                } else {
+                    document.getElementById('error').textContent = '连接失败: ' + (data.error || '未知错误');
+                    document.getElementById('error').style.display = 'block';
+                    document.getElementById('submit-btn').disabled = false;
+                    document.getElementById('submit-btn').textContent = '连接并下一步 →';
+                }
+            });
+        }
+
+        // Load config status
+        fetch('/api/config/status')
+            .then(r => r.json())
+            .then(data => {
+                document.getElementById('sched-status').textContent = data.schedule_configured ? '✅ 已配置' : '❌ 未配置';
+                document.getElementById('sched-status').className = data.schedule_configured ? 'status-ok' : 'status-no';
+                document.getElementById('weather-status').textContent = data.weather_configured ? '✅ 已配置' : '❌ 未配置';
+                document.getElementById('weather-status').className = data.weather_configured ? 'status-ok' : 'status-no';
+            });
+    </script>
+</body>
+</html>

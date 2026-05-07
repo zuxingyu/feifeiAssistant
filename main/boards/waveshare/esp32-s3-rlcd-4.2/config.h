@@ -30,6 +30,7 @@
 
 // 启动按键
 #define BOOT_BUTTON_GPIO        GPIO_NUM_0
+#define USER_BUTTON_GPIO        GPIO_NUM_18  // 用户按键（右侧 KEY 按钮，GPIO轮询确认）
 
 // 反射式 LCD 接口引脚
 #define RLCD_DC_PIN    GPIO_NUM_5  

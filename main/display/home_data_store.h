@@ -248,8 +248,8 @@ private:
         "mon", "tue", "wed", "thu", "fri"
     };
 
-    /** @brief 天气数据缓存有效期（秒），默认 30 分钟 */
-    static constexpr int WEATHER_CACHE_SECONDS = 30 * 60;
+    /** @brief 天气数据缓存有效期（秒），默认 1 小时 */
+    static constexpr int WEATHER_CACHE_SECONDS = 60 * 60;
 
     /** @brief HTTP 响应缓冲区大小 */
     static constexpr int HTTP_RESPONSE_BUF_SIZE = 2048;

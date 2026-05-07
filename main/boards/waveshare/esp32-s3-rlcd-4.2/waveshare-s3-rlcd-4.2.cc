@@ -15,7 +15,6 @@
 #include "mcp_server.h"
 #include "lvgl.h"
 #include "custom_lcd_display.h"
-
 #define TAG "waveshare_rlcd_4_2"
 
 static temperature_sensor_handle_t temp_sensor = NULL;
@@ -34,6 +33,7 @@ private:
 
     i2c_master_bus_handle_t i2c_bus_;
     Button boot_button_;
+    Button user_button_;  // GPIO18 KEY 按键
     CustomLcdDisplay *display_;
     adc_oneshot_unit_handle_t adc1_handle;
     adc_cali_handle_t cali_handle;
@@ -350,6 +350,7 @@ private:
         // 单击按键：
         // 1. 开机阶段进入配网
         // 2. 其他阶段切换对话状态
+        // BOOT 按钮（GPIO0）- 唤醒小智
         boot_button_.OnClick([this]() {
             auto& app = Application::GetInstance();
             if (app.GetDeviceState() == kDeviceStateStarting) {
@@ -357,6 +358,17 @@ private:
                 return;
             }
             app.ToggleChatState();
+        });
+
+        // KEY 按钮 — 页面循环 Home↔Music（调试：先打印日志确认检测到按键）
+        user_button_.OnClick([this]() {
+            ESP_LOGI(TAG, "KEY button clicked!");
+            auto& app = Application::GetInstance();
+            ESP_LOGI(TAG, "Device state: %d", (int)app.GetDeviceState());
+            auto* display = static_cast<CustomLcdDisplay*>(GetDisplay());
+            if (display != nullptr) {
+                display->CyclePage();
+            }
         });
 
 #if CONFIG_USE_DEVICE_AEC
@@ -447,7 +459,7 @@ private:
     }
 
 public:
-    CustomBoard() : boot_button_(BOOT_BUTTON_GPIO) {    
+    CustomBoard() : boot_button_(BOOT_BUTTON_GPIO), user_button_(USER_BUTTON_GPIO) {    
         // 构造阶段完成板级外设准备，供 Application::Initialize() 后续直接使用。
         InitializeI2c();  
         InitializeEnvSensor();

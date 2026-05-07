@@ -29,6 +29,7 @@ private:
         kWifiConfig,
         kActivation,
         kHome,
+        kMusic,
     };
 
     esp_lcd_panel_io_handle_t io_handle = NULL;
@@ -121,6 +122,22 @@ private:
     HomeDataStore* home_data_store_ = nullptr;
     lv_timer_t* home_refresh_timer_ = nullptr;
 
+    // 音乐播放器页面
+    lv_obj_t* music_page_ = nullptr;
+    lv_obj_t* music_top_bar_ = nullptr;
+    lv_obj_t* music_temp_label_ = nullptr;
+    lv_obj_t* music_humidity_label_ = nullptr;
+    lv_obj_t* music_datetime_label_ = nullptr;
+    lv_obj_t* music_battery_label_ = nullptr;
+    lv_obj_t* music_title_label_ = nullptr;
+    lv_obj_t* music_artist_label_ = nullptr;
+    lv_obj_t* music_progress_bar_ = nullptr;
+    lv_obj_t* music_progress_fill_ = nullptr;
+    lv_obj_t* music_time_cur_label_ = nullptr;
+    lv_obj_t* music_time_total_label_ = nullptr;
+    lv_obj_t* music_lyrics_label_ = nullptr;
+    lv_obj_t* music_chat_label_ = nullptr;
+
     lv_obj_t* activation_page_ = nullptr;
     lv_obj_t* activation_top_bar_ = nullptr;
     lv_obj_t* activation_temp_label_ = nullptr;
@@ -150,6 +167,7 @@ private:
     void CreateWifiConfigPage(lv_obj_t* screen);
     void CreateActivationPage(lv_obj_t* screen);
     void CreateHomePage(lv_obj_t* screen);
+    void CreateMusicPage(lv_obj_t* screen);
     void SwitchPage(UiPage page);
     void UpdateWifiConfigMessage(const char* message);
     void UpdateTopBar(lv_obj_t* temp_label, lv_obj_t* humidity_label, lv_obj_t* datetime_label, lv_obj_t* battery_label);
@@ -161,6 +179,7 @@ private:
 
 public:
     void SetupUI() override;
+    void CyclePage();  // 页面循环：Home↔Music
     void SetStatus(const char* status) override;
     void ShowNotification(const char* notification, int duration_ms = 3000) override;
     void SetEmotion(const char* emotion) override;
