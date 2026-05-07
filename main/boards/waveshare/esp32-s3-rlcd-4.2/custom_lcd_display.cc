@@ -1696,16 +1696,8 @@ void CustomLcdDisplay::SetStatus(const char* status) {
             lv_label_set_text(activation_hint_label_, "请在小智控制台输入验证码完成激活");
         }
         UpdateActivationCode(nullptr);
-    } else if (strcmp(safe_status, Lang::Strings::SPEAKING) == 0) {
-        // 播放音乐/TTS时自动切换到音乐页
-        if (current_page_ != UiPage::kMusic) {
-            SwitchPage(UiPage::kMusic);
-            UpdateTopBar(music_temp_label_, music_humidity_label_, music_datetime_label_, music_battery_label_);
-        }
     } else if (strcmp(safe_status, Lang::Strings::STANDBY) == 0) {
         if (current_page_ == UiPage::kMusic) {
-            SwitchPage(UiPage::kHome);
-        } else {
             SwitchPage(UiPage::kHome);
         }
         UpdateHomePage();  // 立即刷新首页数据，不等 60s 定时器
@@ -1750,6 +1742,14 @@ void CustomLcdDisplay::SetChatMessage(const char* role, const char* content) {
             lv_label_set_text(music_artist_label_, "");
             lv_label_set_text(music_title_label_, content);
         }
+    } else if (content != nullptr && strstr(content, " - ") != nullptr) {
+        // 检测到 "歌手 - 歌名" 格式，自动切到音乐页
+        SwitchPage(UiPage::kMusic);
+        UpdateTopBar(music_temp_label_, music_humidity_label_, music_datetime_label_, music_battery_label_);
+        const char* dash = strstr(content, " - ");
+        std::string artist(content, dash - content);
+        lv_label_set_text(music_artist_label_, artist.c_str());
+        lv_label_set_text(music_title_label_, dash + 3);
     } else if (current_page_ == UiPage::kHome && content != nullptr && content[0] != '\0') {
         UpdateHomeStatus(content);
     }
