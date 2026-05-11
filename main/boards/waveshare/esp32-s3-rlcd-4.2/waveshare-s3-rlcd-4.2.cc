@@ -49,6 +49,12 @@ private:
     bool env_cache_ok_ = false;
     float env_cache_temp_c_ = 0.0f;
     float env_cache_humidity_ = 0.0f;
+    TaskHandle_t music_resolve_task_handle_ = nullptr;
+
+    struct MusicResolveRequest {
+        CustomBoard* board;
+        std::string keyword;
+    };
 
     static std::string UrlEncode(const std::string& value) {
         std::ostringstream escaped;
@@ -73,6 +79,48 @@ private:
     static int JsonInt(cJSON* root, const char* key, int fallback = 0) {
         auto* item = cJSON_GetObjectItem(root, key);
         return cJSON_IsNumber(item) ? item->valueint : fallback;
+    }
+
+    void ScheduleMusicMessage(const std::string& role, const std::string& text, const std::string& audio_url = "") {
+        Application::GetInstance().Schedule([role, text, audio_url]() {
+            auto* display = Board::GetInstance().GetDisplay();
+            if (display != nullptr) {
+                display->SetChatMessage(role.c_str(), text.c_str());
+            }
+            if (!audio_url.empty()) {
+                Application::GetInstance().AbortSpeaking(kAbortReasonNone);
+                Application::GetInstance().GetAudioService().PlayMusicUrl(audio_url);
+            }
+        });
+    }
+
+    static bool BuildMusicTrackText(cJSON* source, std::string& text, std::string& audio_url) {
+        if (source == nullptr) {
+            return false;
+        }
+        const char* title = JsonString(source, "title");
+        if (title[0] == '\0') {
+            return false;
+        }
+        audio_url = JsonString(source, "audio_url");
+        cJSON* root = cJSON_CreateObject();
+        cJSON_AddStringToObject(root, "type", "music");
+        cJSON_AddStringToObject(root, "title", title);
+        cJSON_AddStringToObject(root, "artist", JsonString(source, "artist"));
+        cJSON_AddStringToObject(root, "album", JsonString(source, "album"));
+        cJSON_AddStringToObject(root, "lyric", JsonString(source, "lyric"));
+        cJSON_AddStringToObject(root, "audio_url", audio_url.c_str());
+        cJSON_AddStringToObject(root, "state", JsonString(source, "state", audio_url.empty() ? "暂无可播放音源" : "播放中"));
+        cJSON_AddNumberToObject(root, "position_ms", JsonInt(source, "position_ms"));
+        cJSON_AddNumberToObject(root, "duration_ms", JsonInt(source, "duration_ms"));
+
+        char* printed = cJSON_PrintUnformatted(root);
+        if (printed != nullptr) {
+            text = printed;
+            cJSON_free(printed);
+        }
+        cJSON_Delete(root);
+        return !text.empty();
     }
 
     bool ApplyMusicTrack(cJSON* source) {
@@ -111,19 +159,18 @@ private:
     }
 
     bool ResolveAndPlaySong(const std::string& keyword, std::string& message) {
-        auto* display = GetDisplay();
-        if (display != nullptr) {
-            cJSON* preparing = cJSON_CreateObject();
-            cJSON_AddStringToObject(preparing, "type", "music");
-            cJSON_AddStringToObject(preparing, "title", keyword.c_str());
-            cJSON_AddStringToObject(preparing, "artist", "小智点歌");
-            cJSON_AddStringToObject(preparing, "state", "正在准备歌曲");
-            cJSON_AddStringToObject(preparing, "lyric", "正在连接音乐解析服务...");
-            char* text = cJSON_PrintUnformatted(preparing);
-            display->SetChatMessage("music", text);
-            cJSON_free(text);
-            cJSON_Delete(preparing);
+        cJSON* preparing = cJSON_CreateObject();
+        cJSON_AddStringToObject(preparing, "type", "music");
+        cJSON_AddStringToObject(preparing, "title", keyword.c_str());
+        cJSON_AddStringToObject(preparing, "artist", "小智点歌");
+        cJSON_AddStringToObject(preparing, "state", "正在准备歌曲");
+        cJSON_AddStringToObject(preparing, "lyric", "正在连接音乐解析服务...");
+        char* preparing_text = cJSON_PrintUnformatted(preparing);
+        if (preparing_text != nullptr) {
+            ScheduleMusicMessage("music", preparing_text);
+            cJSON_free(preparing_text);
         }
+        cJSON_Delete(preparing);
 
         auto network = Board::GetInstance().GetNetwork();
         if (network == nullptr) {
@@ -131,7 +178,8 @@ private:
             return false;
         }
 
-        std::string url = std::string(MUSIC_RESOLVER_ENDPOINT) + "?keyword=" + UrlEncode(keyword) + "&index=0";
+        std::string url = std::string(MUSIC_RESOLVER_ENDPOINT) + "?keyword=" + UrlEncode(keyword) + "&index=0&compact=1";
+        ESP_LOGI(TAG, "Resolve music keyword=%s", keyword.c_str());
         auto http = network->CreateHttp(2);
         http->SetTimeout(20000);
         http->SetHeader("Accept", "application/json");
@@ -143,6 +191,7 @@ private:
         int status = http->GetStatusCode();
         std::string body = http->ReadAll();
         http->Close();
+        ESP_LOGI(TAG, "Music resolver status=%d body_len=%u", status, static_cast<unsigned>(body.size()));
         if (status < 200 || status >= 300) {
             message = "音乐解析服务返回异常";
             ESP_LOGE(TAG, "Music resolver status=%d body=%s", status, body.c_str());
@@ -166,12 +215,43 @@ private:
         if (track == nullptr) {
             track = root;
         }
-        bool ok = ApplyMusicTrack(track);
+        std::string track_text;
+        std::string audio_url;
+        bool ok = BuildMusicTrackText(track, track_text, audio_url);
         const char* state = JsonString(track, "state", "");
-        const char* audio_url = JsonString(track, "audio_url", "");
-        message = audio_url[0] ? "音乐已开始播放" : (state[0] ? state : "暂无可播放音源");
+        if (ok) {
+            ScheduleMusicMessage("music", track_text, audio_url);
+        }
+        message = !audio_url.empty() ? "音乐已开始播放" : (state[0] ? state : "暂无可播放音源");
         cJSON_Delete(root);
-        return ok && audio_url[0] != '\0';
+        return ok && !audio_url.empty();
+    }
+
+    bool StartResolveSongTask(const std::string& keyword) {
+        if (music_resolve_task_handle_ != nullptr) {
+            ESP_LOGW(TAG, "Music resolver task is already running");
+            return false;
+        }
+
+        auto* request = new MusicResolveRequest{this, keyword};
+        auto task = [](void* arg) {
+            auto* request = static_cast<MusicResolveRequest*>(arg);
+            ESP_LOGI(TAG, "Music resolver task start: %s", request->keyword.c_str());
+            std::string message;
+            request->board->ResolveAndPlaySong(request->keyword, message);
+            ESP_LOGI(TAG, "Music resolver finished: %s", message.c_str());
+            request->board->music_resolve_task_handle_ = nullptr;
+            delete request;
+            vTaskDelete(nullptr);
+        };
+
+        if (xTaskCreate(task, "music_resolve", 2048 * 8, request, 3, &music_resolve_task_handle_) != pdPASS) {
+            delete request;
+            music_resolve_task_handle_ = nullptr;
+            ESP_LOGE(TAG, "Failed to create music resolver task");
+            return false;
+        }
+        return true;
     }
 
     void InitializeI2c() {
@@ -527,13 +607,14 @@ private:
                 Property("keyword", kPropertyTypeString),
             }),
             [this](const PropertyList& properties) -> ReturnValue {
-                std::string message;
                 auto keyword = properties["keyword"].value<std::string>();
                 if (keyword.empty()) {
                     return "请告诉我要播放的歌曲名";
                 }
-                bool ok = ResolveAndPlaySong(keyword, message);
-                return ok ? message : message;
+                if (!StartResolveSongTask(keyword)) {
+                    return "音乐正在加载中，请稍等";
+                }
+                return "正在加载音乐信息";
             });
 
         mcp_server.AddTool("self.music.set_track",

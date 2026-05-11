@@ -1258,7 +1258,7 @@ void CustomLcdDisplay::CreateMusicPage(lv_obj_t* screen) {
     lv_obj_set_style_text_font(music_lyrics_label_, &alibaba_puhui_14, 0);
     lv_obj_set_style_text_color(music_lyrics_label_, lv_color_black(), 0);
     lv_obj_set_style_text_align(music_lyrics_label_, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_set_style_text_line_space(music_lyrics_label_, -3, 0);
+    lv_obj_set_style_text_line_space(music_lyrics_label_, 2, 0);
     lv_obj_set_style_pad_top(music_lyrics_label_, 0, 0);
     lv_label_set_long_mode(music_lyrics_label_, LV_LABEL_LONG_WRAP);
     lv_label_set_text(music_lyrics_label_, "暂无歌词");
