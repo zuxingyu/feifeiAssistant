@@ -6,6 +6,7 @@
 #include <condition_variable>
 #include <chrono>
 #include <mutex>
+#include <atomic>
 
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
@@ -130,6 +131,11 @@ public:
     bool PushPacketToDecodeQueue(std::unique_ptr<AudioStreamPacket> packet, bool wait = false);
     std::unique_ptr<AudioStreamPacket> PopPacketFromSendQueue();
     void PlaySound(const std::string_view& sound);
+    void PlayMusicUrl(const std::string& url);
+    bool ToggleMusicPause();
+    void StopMusicPlayback();
+    bool IsMusicPlaying() const { return music_playing_; }
+    bool IsMusicPaused() const { return music_paused_; }
     bool ReadAudioData(std::vector<int16_t>& data, int sample_rate, int samples);
     void ResetDecoder();
     void SetModelsList(srmodel_list_t* models_list);
@@ -143,6 +149,7 @@ private:
     void* opus_encoder_ = nullptr;
     void* opus_decoder_ = nullptr;
     std::mutex decoder_mutex_;
+    std::mutex output_mutex_;
     std::mutex input_resampler_mutex_;
     esp_ae_rate_cvt_handle_t input_resampler_ = nullptr;
     esp_ae_rate_cvt_handle_t output_resampler_ = nullptr;
@@ -183,10 +190,16 @@ private:
     esp_timer_handle_t audio_power_timer_ = nullptr;
     std::chrono::steady_clock::time_point last_input_time_;
     std::chrono::steady_clock::time_point last_output_time_;
+    TaskHandle_t music_playback_task_handle_ = nullptr;
+    std::string music_url_;
+    std::atomic<bool> music_stop_requested_{false};
+    std::atomic<bool> music_playing_{false};
+    std::atomic<bool> music_paused_{false};
 
     void AudioInputTask();
     void AudioOutputTask();
     void OpusCodecTask();
+    void MusicPlaybackTask();
     void PushTaskToEncodeQueue(AudioTaskType type, std::vector<int16_t>&& pcm);
     void SetDecodeSampleRate(int sample_rate, int frame_duration);
     void CheckAndUpdateAudioPowerState();

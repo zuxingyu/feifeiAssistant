@@ -5,6 +5,10 @@
 #include <esp_log.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
+#include <cJSON.h>
+#include <algorithm>
+#include <iomanip>
+#include <sstream>
 #include "custom_lcd_display.h"
 #include "wifi_board.h"
 #include "application.h"
@@ -45,6 +49,130 @@ private:
     bool env_cache_ok_ = false;
     float env_cache_temp_c_ = 0.0f;
     float env_cache_humidity_ = 0.0f;
+
+    static std::string UrlEncode(const std::string& value) {
+        std::ostringstream escaped;
+        escaped.fill('0');
+        escaped << std::hex << std::uppercase;
+        for (unsigned char c : value) {
+            if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.' || c == '~') {
+                escaped << c;
+            } else {
+                escaped << '%' << std::setw(2) << static_cast<int>(c);
+            }
+        }
+        return escaped.str();
+    }
+
+    static const char* JsonString(cJSON* root, const char* key, const char* fallback = "") {
+        auto* item = cJSON_GetObjectItem(root, key);
+        return cJSON_IsString(item) && item->valuestring != nullptr ? item->valuestring : fallback;
+    }
+
+    static int JsonInt(cJSON* root, const char* key, int fallback = 0) {
+        auto* item = cJSON_GetObjectItem(root, key);
+        return cJSON_IsNumber(item) ? item->valueint : fallback;
+    }
+
+    bool ApplyMusicTrack(cJSON* source) {
+        if (source == nullptr) {
+            return false;
+        }
+        const char* title = JsonString(source, "title");
+        if (title[0] == '\0') {
+            return false;
+        }
+        const char* audio_url = JsonString(source, "audio_url");
+        cJSON* root = cJSON_CreateObject();
+        cJSON_AddStringToObject(root, "type", "music");
+        cJSON_AddStringToObject(root, "title", title);
+        cJSON_AddStringToObject(root, "artist", JsonString(source, "artist"));
+        cJSON_AddStringToObject(root, "album", JsonString(source, "album"));
+        cJSON_AddStringToObject(root, "lyric", JsonString(source, "lyric"));
+        cJSON_AddStringToObject(root, "audio_url", audio_url);
+        cJSON_AddStringToObject(root, "state", JsonString(source, "state", audio_url[0] ? "播放中" : "暂无可播放音源"));
+        cJSON_AddNumberToObject(root, "position_ms", JsonInt(source, "position_ms"));
+        cJSON_AddNumberToObject(root, "duration_ms", JsonInt(source, "duration_ms"));
+
+        char* text = cJSON_PrintUnformatted(root);
+        auto* display = GetDisplay();
+        if (display != nullptr) {
+            display->SetChatMessage("music", text);
+        }
+        cJSON_free(text);
+        cJSON_Delete(root);
+
+        if (audio_url[0] != '\0') {
+            Application::GetInstance().AbortSpeaking(kAbortReasonNone);
+            Application::GetInstance().GetAudioService().PlayMusicUrl(audio_url);
+        }
+        return true;
+    }
+
+    bool ResolveAndPlaySong(const std::string& keyword, std::string& message) {
+        auto* display = GetDisplay();
+        if (display != nullptr) {
+            cJSON* preparing = cJSON_CreateObject();
+            cJSON_AddStringToObject(preparing, "type", "music");
+            cJSON_AddStringToObject(preparing, "title", keyword.c_str());
+            cJSON_AddStringToObject(preparing, "artist", "小智点歌");
+            cJSON_AddStringToObject(preparing, "state", "正在准备歌曲");
+            cJSON_AddStringToObject(preparing, "lyric", "正在连接音乐解析服务...");
+            char* text = cJSON_PrintUnformatted(preparing);
+            display->SetChatMessage("music", text);
+            cJSON_free(text);
+            cJSON_Delete(preparing);
+        }
+
+        auto network = Board::GetInstance().GetNetwork();
+        if (network == nullptr) {
+            message = "设备网络未连接，暂时不能解析音乐";
+            return false;
+        }
+
+        std::string url = std::string(MUSIC_RESOLVER_ENDPOINT) + "?keyword=" + UrlEncode(keyword) + "&index=0";
+        auto http = network->CreateHttp(2);
+        http->SetTimeout(20000);
+        http->SetHeader("Accept", "application/json");
+        if (!http->Open("GET", url)) {
+            message = "音乐解析服务连接失败";
+            ESP_LOGE(TAG, "Failed to open music resolver, err=%d url=%s", http->GetLastError(), url.c_str());
+            return false;
+        }
+        int status = http->GetStatusCode();
+        std::string body = http->ReadAll();
+        http->Close();
+        if (status < 200 || status >= 300) {
+            message = "音乐解析服务返回异常";
+            ESP_LOGE(TAG, "Music resolver status=%d body=%s", status, body.c_str());
+            return false;
+        }
+
+        cJSON* root = cJSON_Parse(body.c_str());
+        if (root == nullptr) {
+            message = "音乐解析结果格式错误";
+            ESP_LOGE(TAG, "Invalid music resolver JSON: %s", body.c_str());
+            return false;
+        }
+        cJSON* error = cJSON_GetObjectItem(root, "error");
+        if (cJSON_IsString(error) && error->valuestring != nullptr && error->valuestring[0] != '\0') {
+            message = error->valuestring;
+            cJSON_Delete(root);
+            return false;
+        }
+
+        cJSON* track = cJSON_GetObjectItem(root, "set_track_args");
+        if (track == nullptr) {
+            track = root;
+        }
+        bool ok = ApplyMusicTrack(track);
+        const char* state = JsonString(track, "state", "");
+        const char* audio_url = JsonString(track, "audio_url", "");
+        message = audio_url[0] ? "音乐已开始播放" : (state[0] ? state : "暂无可播放音源");
+        cJSON_Delete(root);
+        return ok && audio_url[0] != '\0';
+    }
 
     void InitializeI2c() {
         // 初始化音频编解码器使用的 I2C 主总线。
@@ -390,6 +518,123 @@ private:
             EnterWifiConfigMode();
             return true;
         });
+
+        mcp_server.AddTool("self.music.play_song",
+            "Play a song on the device. Use this as the primary and only tool when the user asks to play music. "
+            "The device will resolve song metadata, lyric and a playable audio URL from the configured music resolver, "
+            "then update the music page and start playback by itself.",
+            PropertyList({
+                Property("keyword", kPropertyTypeString),
+            }),
+            [this](const PropertyList& properties) -> ReturnValue {
+                std::string message;
+                auto keyword = properties["keyword"].value<std::string>();
+                if (keyword.empty()) {
+                    return "请告诉我要播放的歌曲名";
+                }
+                bool ok = ResolveAndPlaySong(keyword, message);
+                return ok ? message : message;
+            });
+
+        mcp_server.AddTool("self.music.set_track",
+            "Update the music page with current song metadata, lyric and progress. "
+            "Use this after `prepare_music_card` returns title, artist, album, lyric, audio_url and duration_ms. "
+            "For real song playback, the model should first call the external music tool `prepare_music_card`, "
+            "then call this tool directly. This tool is the device-side final step.",
+            PropertyList({
+                Property("title", kPropertyTypeString),
+                Property("artist", kPropertyTypeString, ""),
+                Property("album", kPropertyTypeString, ""),
+                Property("lyric", kPropertyTypeString, ""),
+                Property("audio_url", kPropertyTypeString, ""),
+                Property("state", kPropertyTypeString, "播放中"),
+                Property("position_ms", kPropertyTypeInteger, 0, 0, 24 * 60 * 60 * 1000),
+                Property("duration_ms", kPropertyTypeInteger, 0, 0, 24 * 60 * 60 * 1000),
+            }),
+            [this](const PropertyList& properties) -> ReturnValue {
+                const auto audio_url = properties["audio_url"].value<std::string>();
+                cJSON* root = cJSON_CreateObject();
+                cJSON_AddStringToObject(root, "type", "music");
+                cJSON_AddStringToObject(root, "title", properties["title"].value<std::string>().c_str());
+                cJSON_AddStringToObject(root, "artist", properties["artist"].value<std::string>().c_str());
+                cJSON_AddStringToObject(root, "album", properties["album"].value<std::string>().c_str());
+                cJSON_AddStringToObject(root, "lyric", properties["lyric"].value<std::string>().c_str());
+                cJSON_AddStringToObject(root, "audio_url", audio_url.c_str());
+                cJSON_AddStringToObject(root, "state", properties["state"].value<std::string>().c_str());
+                cJSON_AddNumberToObject(root, "position_ms", properties["position_ms"].value<int>());
+                cJSON_AddNumberToObject(root, "duration_ms", properties["duration_ms"].value<int>());
+
+                char* text = cJSON_PrintUnformatted(root);
+                auto* display = GetDisplay();
+                if (display != nullptr) {
+                    display->SetChatMessage("music", text);
+                }
+                cJSON_free(text);
+                cJSON_Delete(root);
+                if (!audio_url.empty()) {
+                    Application::GetInstance().AbortSpeaking(kAbortReasonNone);
+                    Application::GetInstance().GetAudioService().PlayMusicUrl(audio_url);
+                }
+                return true;
+            });
+
+        mcp_server.AddTool("self.music.set_progress",
+            "Update music playback progress on the music page.",
+            PropertyList({
+                Property("position_ms", kPropertyTypeInteger, 0, 0, 24 * 60 * 60 * 1000),
+                Property("duration_ms", kPropertyTypeInteger, 0, 0, 24 * 60 * 60 * 1000),
+                Property("state", kPropertyTypeString, "播放中"),
+            }),
+            [this](const PropertyList& properties) -> ReturnValue {
+                cJSON* root = cJSON_CreateObject();
+                cJSON_AddStringToObject(root, "type", "music");
+                cJSON_AddStringToObject(root, "state", properties["state"].value<std::string>().c_str());
+                cJSON_AddNumberToObject(root, "position_ms", properties["position_ms"].value<int>());
+                cJSON_AddNumberToObject(root, "duration_ms", properties["duration_ms"].value<int>());
+
+                char* text = cJSON_PrintUnformatted(root);
+                auto* display = GetDisplay();
+                if (display != nullptr) {
+                    display->SetChatMessage("music", text);
+                }
+                cJSON_free(text);
+                cJSON_Delete(root);
+                return true;
+            });
+
+        mcp_server.AddTool("self.music.set_lyric",
+            "Update the current lyric text on the music page.",
+            PropertyList({
+                Property("lyric", kPropertyTypeString),
+            }),
+            [this](const PropertyList& properties) -> ReturnValue {
+                auto* display = GetDisplay();
+                if (display != nullptr) {
+                    display->SetChatMessage("lyric", properties["lyric"].value<std::string>().c_str());
+                }
+                return true;
+            });
+
+        mcp_server.AddTool("self.music.toggle_playback",
+            "Toggle current music playback between pause and resume. "
+            "Use this only when music is already playing or paused on the device.",
+            PropertyList(),
+            [this](const PropertyList& properties) -> ReturnValue {
+                auto& audio_service = Application::GetInstance().GetAudioService();
+                bool playing = audio_service.ToggleMusicPause();
+                cJSON* root = cJSON_CreateObject();
+                cJSON_AddStringToObject(root, "type", "music");
+                cJSON_AddStringToObject(root, "state", playing ? "播放中" : "已暂停");
+
+                char* text = cJSON_PrintUnformatted(root);
+                auto* display = GetDisplay();
+                if (display != nullptr) {
+                    display->SetChatMessage("music", text);
+                }
+                cJSON_free(text);
+                cJSON_Delete(root);
+                return playing ? "音乐继续播放" : "音乐已暂停";
+            });
     }
 
     void InitializeLcdDisplay() {

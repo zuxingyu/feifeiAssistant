@@ -1,6 +1,16 @@
 #include "audio_service.h"
+#include "board.h"
+#include "esp_audio_dec_default.h"
+#include "esp_audio_simple_dec_default.h"
+#include "esp_audio_simple_dec.h"
+#include "esp_aac_dec.h"
+#include "impl/esp_m4a_dec.h"
+#include "impl/esp_ts_dec.h"
 #include <esp_log.h>
+#include <esp_heap_caps.h>
 #include <cstring>
+#include <algorithm>
+#include <cctype>
 
 #define RATE_CVT_CFG(_src_rate, _dest_rate, _channel)        \
     (esp_ae_rate_cvt_cfg_t)                                  \
@@ -37,11 +47,105 @@
 
 #define TAG "AudioService"
 
+namespace {
+
+typedef union {
+    esp_m4a_dec_cfg_t m4a_cfg;
+    esp_ts_dec_cfg_t ts_cfg;
+    esp_aac_dec_cfg_t aac_cfg;
+} MusicSimpleDecoderConfig;
+
+std::string LowerUrlPath(std::string url) {
+    auto query_pos = url.find('?');
+    if (query_pos != std::string::npos) {
+        url.resize(query_pos);
+    }
+    std::transform(url.begin(), url.end(), url.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    return url;
+}
+
+std::string LowerUrl(std::string url) {
+    std::transform(url.begin(), url.end(), url.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    return url;
+}
+
+bool EndsWith(const std::string& text, const char* suffix) {
+    const auto suffix_len = std::strlen(suffix);
+    return text.size() >= suffix_len && text.compare(text.size() - suffix_len, suffix_len, suffix) == 0;
+}
+
+esp_audio_simple_dec_type_t GuessMusicDecoderType(const std::string& url) {
+    auto path = LowerUrlPath(url);
+    auto full_url = LowerUrl(url);
+    if (EndsWith(path, ".mp3") || full_url.find(".mp3") != std::string::npos) {
+        return ESP_AUDIO_SIMPLE_DEC_TYPE_MP3;
+    }
+    if (EndsWith(path, ".aac")) {
+        return ESP_AUDIO_SIMPLE_DEC_TYPE_AAC;
+    }
+    if (EndsWith(path, ".wav")) {
+        return ESP_AUDIO_SIMPLE_DEC_TYPE_WAV;
+    }
+    if (EndsWith(path, ".ts")) {
+        return ESP_AUDIO_SIMPLE_DEC_TYPE_TS;
+    }
+    if (EndsWith(path, ".m4a") || EndsWith(path, ".mp4")) {
+        return ESP_AUDIO_SIMPLE_DEC_TYPE_M4A;
+    }
+    // QQ 音乐的 C100 链接经常是 m4a，即使后续参数比较长。
+    return ESP_AUDIO_SIMPLE_DEC_TYPE_M4A;
+}
+
+void FillMusicDecoderConfig(esp_audio_simple_dec_cfg_t& cfg, MusicSimpleDecoderConfig& all_cfg) {
+    switch (cfg.dec_type) {
+        case ESP_AUDIO_SIMPLE_DEC_TYPE_AAC:
+            all_cfg.aac_cfg.aac_plus_enable = true;
+            cfg.cfg_size = sizeof(esp_aac_dec_cfg_t);
+            break;
+        case ESP_AUDIO_SIMPLE_DEC_TYPE_M4A:
+            all_cfg.m4a_cfg.aac_plus_enable = true;
+            cfg.cfg_size = sizeof(esp_m4a_dec_cfg_t);
+            break;
+        case ESP_AUDIO_SIMPLE_DEC_TYPE_TS:
+            all_cfg.ts_cfg.aac_plus_enable = true;
+            cfg.cfg_size = sizeof(esp_ts_dec_cfg_t);
+            break;
+        default:
+            break;
+    }
+}
+
+void ConvertDecodedPcmToMono16(const uint8_t* pcm_bytes, size_t byte_count, int channels, std::vector<int16_t>& out) {
+    auto samples = byte_count / sizeof(int16_t);
+    const auto* samples16 = reinterpret_cast<const int16_t*>(pcm_bytes);
+    if (channels <= 1) {
+        out.assign(samples16, samples16 + samples);
+        return;
+    }
+
+    auto frames = samples / channels;
+    out.resize(frames);
+    for (size_t i = 0; i < frames; ++i) {
+        int mixed = 0;
+        for (int ch = 0; ch < channels; ++ch) {
+            mixed += samples16[i * channels + ch];
+        }
+        out[i] = static_cast<int16_t>(mixed / channels);
+    }
+}
+
+}  // namespace
+
 AudioService::AudioService() {
     event_group_ = xEventGroupCreate();
 }
 
 AudioService::~AudioService() {
+    StopMusicPlayback();
     if (event_group_ != nullptr) {
         vEventGroupDelete(event_group_);
     }
@@ -167,6 +271,7 @@ void AudioService::Start() {
 }
 
 void AudioService::Stop() {
+    StopMusicPlayback();
     esp_timer_stop(audio_power_timer_);
     service_stopped_ = true;
     xEventGroupSetBits(event_group_, AS_EVENT_AUDIO_TESTING_RUNNING |
@@ -300,13 +405,22 @@ void AudioService::AudioOutputTask() {
         audio_queue_cv_.notify_all();
         lock.unlock();
 
+        if (music_playing_) {
+            continue;
+        }
+
         if (!codec_->output_enabled()) {
             esp_timer_stop(audio_power_timer_);
             esp_timer_start_periodic(audio_power_timer_, AUDIO_POWER_CHECK_INTERVAL_MS * 1000);
             codec_->EnableOutput(true);
         }
 
-        codec_->OutputData(task->pcm);
+        {
+            std::lock_guard<std::mutex> output_lock(output_mutex_);
+            if (!music_playing_) {
+                codec_->OutputData(task->pcm);
+            }
+        }
 
         /* Update the last output time */
         last_output_time_ = std::chrono::steady_clock::now();
@@ -338,6 +452,11 @@ void AudioService::OpusCodecTask() {
 
         /* Decode the audio from decode queue */
         if (!audio_decode_queue_.empty() && audio_playback_queue_.size() < MAX_PLAYBACK_TASKS_IN_QUEUE) {
+            if (music_playing_) {
+                audio_decode_queue_.clear();
+                audio_queue_cv_.notify_all();
+                continue;
+            }
             auto packet = std::move(audio_decode_queue_.front());
             audio_decode_queue_.pop_front();
             audio_queue_cv_.notify_all();
@@ -505,6 +624,9 @@ void AudioService::PushTaskToEncodeQueue(AudioTaskType type, std::vector<int16_t
 
 bool AudioService::PushPacketToDecodeQueue(std::unique_ptr<AudioStreamPacket> packet, bool wait) {
     std::unique_lock<std::mutex> lock(audio_queue_mutex_);
+    if (music_playing_) {
+        return false;
+    }
     if (audio_decode_queue_.size() >= MAX_DECODE_PACKETS_IN_QUEUE) {
         if (wait) {
             audio_queue_cv_.wait(lock, [this]() { return audio_decode_queue_.size() < MAX_DECODE_PACKETS_IN_QUEUE; });
@@ -628,6 +750,289 @@ void AudioService::EnableDeviceAec(bool enable) {
 
 void AudioService::SetCallbacks(AudioServiceCallbacks& callbacks) {
     callbacks_ = callbacks;
+}
+
+void AudioService::PlayMusicUrl(const std::string& url) {
+    if (url.empty()) {
+        ESP_LOGW(TAG, "Skip music playback: empty url");
+        return;
+    }
+
+    StopMusicPlayback();
+    ResetDecoder();
+    music_url_ = url;
+    music_stop_requested_ = false;
+    music_paused_ = false;
+    music_playing_ = true;
+    if (xTaskCreate([](void* arg) {
+            auto* audio_service = static_cast<AudioService*>(arg);
+            audio_service->MusicPlaybackTask();
+            audio_service->music_playback_task_handle_ = nullptr;
+            vTaskDelete(NULL);
+        }, "music_playback", 2048 * 10, this, 5, &music_playback_task_handle_) != pdPASS) {
+        music_playback_task_handle_ = nullptr;
+        music_playing_ = false;
+        music_paused_ = false;
+        ESP_LOGE(TAG, "Failed to create music playback task");
+    }
+}
+
+bool AudioService::ToggleMusicPause() {
+    if (!music_playing_) {
+        ESP_LOGW(TAG, "Skip music pause toggle: no active music");
+        return false;
+    }
+    bool paused = !music_paused_.load();
+    music_paused_ = paused;
+    ESP_LOGI(TAG, "Music playback %s", paused ? "paused" : "resumed");
+    return !paused;
+}
+
+void AudioService::StopMusicPlayback() {
+    if (music_playback_task_handle_ == nullptr) {
+        music_playing_ = false;
+        music_paused_ = false;
+        return;
+    }
+
+    music_stop_requested_ = true;
+    for (int i = 0; i < 100 && music_playback_task_handle_ != nullptr; ++i) {
+        vTaskDelay(pdMS_TO_TICKS(20));
+    }
+    if (music_playback_task_handle_ != nullptr) {
+        ESP_LOGW(TAG, "Music playback task did not stop in time");
+    }
+    music_playing_ = false;
+    music_paused_ = false;
+}
+
+void AudioService::MusicPlaybackTask() {
+    struct MusicPlaybackGuard {
+        AudioService* service;
+        ~MusicPlaybackGuard() {
+            service->music_playing_ = false;
+            service->music_paused_ = false;
+            service->music_stop_requested_ = false;
+            Board::GetInstance().SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
+        }
+    } guard{this};
+
+    auto url = music_url_;
+    ESP_LOGI(TAG, "Start music playback: %s", url.c_str());
+    Board::GetInstance().SetPowerSaveLevel(PowerSaveLevel::PERFORMANCE);
+
+    if (!codec_->output_enabled()) {
+        esp_timer_stop(audio_power_timer_);
+        esp_timer_start_periodic(audio_power_timer_, AUDIO_POWER_CHECK_INTERVAL_MS * 1000);
+        codec_->EnableOutput(true);
+    }
+
+    auto network = Board::GetInstance().GetNetwork();
+    if (network == nullptr) {
+        ESP_LOGE(TAG, "No network for music playback");
+        return;
+    }
+
+    std::unique_ptr<Http> http;
+    std::string current_url = url;
+    for (int redirects = 0; redirects < 4; ++redirects) {
+        http = network->CreateHttp(2);
+        http->SetTimeout(15000);
+        http->SetHeader("User-Agent", "Mozilla/5.0");
+        http->SetHeader("Referer", "https://y.qq.com");
+        http->SetHeader("Accept", "*/*");
+        http->SetHeader("Range", "bytes=0-");
+        if (!http->Open("GET", current_url)) {
+            ESP_LOGE(TAG, "Failed to open music url, err=%d", http->GetLastError());
+            return;
+        }
+
+        auto status_code = http->GetStatusCode();
+        if (status_code >= 300 && status_code < 400) {
+            auto location = http->GetResponseHeader("Location");
+            http->Close();
+            if (location.empty()) {
+                ESP_LOGE(TAG, "Music url redirected without Location header");
+                return;
+            }
+            ESP_LOGI(TAG, "Music url redirect: %s", location.c_str());
+            current_url = location;
+            continue;
+        }
+        if (status_code < 200 || status_code >= 300) {
+            ESP_LOGE(TAG, "Music url returned status %d", status_code);
+            return;
+        }
+        break;
+    }
+
+    esp_audio_dec_register_default();
+    esp_audio_simple_dec_register_default();
+
+    esp_audio_simple_dec_handle_t decoder = nullptr;
+    MusicSimpleDecoderConfig all_cfg = {};
+    esp_audio_simple_dec_cfg_t dec_cfg = {
+        .dec_type = GuessMusicDecoderType(url),
+        .dec_cfg = &all_cfg,
+        .cfg_size = 0,
+        .use_frame_dec = false,
+    };
+    FillMusicDecoderConfig(dec_cfg, all_cfg);
+    auto ret = esp_audio_simple_dec_open(&dec_cfg, &decoder);
+    if (ret != ESP_AUDIO_ERR_OK || decoder == nullptr) {
+        ESP_LOGE(TAG, "Failed to open music decoder type=%d ret=%d", dec_cfg.dec_type, ret);
+        esp_audio_simple_dec_unregister_default();
+        esp_audio_dec_unregister_default();
+        return;
+    }
+
+    constexpr int kReadSize = 4096;
+    int out_size = 8192;
+    auto* in_buf = static_cast<uint8_t*>(heap_caps_malloc(kReadSize, MALLOC_CAP_8BIT));
+    auto* out_buf = static_cast<uint8_t*>(heap_caps_malloc(out_size, MALLOC_CAP_8BIT));
+    if (in_buf == nullptr || out_buf == nullptr) {
+        ESP_LOGE(TAG, "No memory for music decoder buffers");
+        if (in_buf) heap_caps_free(in_buf);
+        if (out_buf) heap_caps_free(out_buf);
+        esp_audio_simple_dec_close(decoder);
+        esp_audio_simple_dec_unregister_default();
+        esp_audio_dec_unregister_default();
+        return;
+    }
+
+    esp_ae_rate_cvt_handle_t music_resampler = nullptr;
+    int current_sample_rate = 0;
+    bool info_ready = false;
+    std::vector<int16_t> mono_pcm;
+    std::vector<int16_t> output_pcm;
+
+    while (!music_stop_requested_) {
+        while (music_paused_ && !music_stop_requested_) {
+            vTaskDelay(pdMS_TO_TICKS(50));
+        }
+        if (music_stop_requested_) {
+            break;
+        }
+
+        int read_len = http->Read(reinterpret_cast<char*>(in_buf), kReadSize);
+        if (read_len < 0) {
+            ESP_LOGE(TAG, "Failed to read music stream: %d", read_len);
+            break;
+        }
+        if (read_len == 0) {
+            break;
+        }
+
+        esp_audio_simple_dec_raw_t raw = {
+            .buffer = in_buf,
+            .len = static_cast<uint32_t>(read_len),
+            .eos = read_len < kReadSize,
+            .consumed = 0,
+            .frame_recover = ESP_AUDIO_SIMPLE_DEC_RECOVERY_NONE,
+        };
+
+        while (raw.len > 0 && !music_stop_requested_) {
+            while (music_paused_ && !music_stop_requested_) {
+                vTaskDelay(pdMS_TO_TICKS(50));
+            }
+            if (music_stop_requested_) {
+                break;
+            }
+
+            esp_audio_simple_dec_out_t out_frame = {
+                .buffer = out_buf,
+                .len = static_cast<uint32_t>(out_size),
+                .needed_size = 0,
+                .decoded_size = 0,
+            };
+            ret = esp_audio_simple_dec_process(decoder, &raw, &out_frame);
+            if (ret == ESP_AUDIO_ERR_BUFF_NOT_ENOUGH) {
+                auto* new_out = static_cast<uint8_t*>(heap_caps_realloc(out_buf, out_frame.needed_size, MALLOC_CAP_8BIT));
+                if (new_out == nullptr) {
+                    ESP_LOGE(TAG, "No memory to grow music output buffer to %lu", out_frame.needed_size);
+                    music_stop_requested_ = true;
+                    break;
+                }
+                out_buf = new_out;
+                out_size = out_frame.needed_size;
+                continue;
+            }
+            if (ret != ESP_AUDIO_ERR_OK) {
+                ESP_LOGE(TAG, "Music decode failed ret=%d", ret);
+                music_stop_requested_ = true;
+                break;
+            }
+
+            if (out_frame.decoded_size > 0) {
+                esp_audio_simple_dec_info_t dec_info = {};
+                if (esp_audio_simple_dec_get_info(decoder, &dec_info) == ESP_AUDIO_ERR_OK) {
+                    if (!info_ready) {
+                        ESP_LOGI(TAG, "Music info: sample_rate=%lu bits=%d channels=%d",
+                                 dec_info.sample_rate, dec_info.bits_per_sample, dec_info.channel);
+                        info_ready = true;
+                    }
+                    if (dec_info.bits_per_sample != 16) {
+                        ESP_LOGE(TAG, "Unsupported music bits per sample: %d", dec_info.bits_per_sample);
+                        music_stop_requested_ = true;
+                        break;
+                    }
+
+                    ConvertDecodedPcmToMono16(out_frame.buffer, out_frame.decoded_size, dec_info.channel, mono_pcm);
+                    if (static_cast<int>(dec_info.sample_rate) != codec_->output_sample_rate()) {
+                        if (music_resampler == nullptr || current_sample_rate != static_cast<int>(dec_info.sample_rate)) {
+                            if (music_resampler != nullptr) {
+                                esp_ae_rate_cvt_close(music_resampler);
+                            }
+                            esp_ae_rate_cvt_cfg_t cfg = RATE_CVT_CFG(dec_info.sample_rate, codec_->output_sample_rate(), ESP_AUDIO_MONO);
+                            auto resampler_ret = esp_ae_rate_cvt_open(&cfg, &music_resampler);
+                            if (music_resampler == nullptr) {
+                                ESP_LOGE(TAG, "Failed to create music resampler ret=%d", resampler_ret);
+                                music_stop_requested_ = true;
+                                break;
+                            }
+                            current_sample_rate = dec_info.sample_rate;
+                        }
+
+                        uint32_t max_out_samples = 0;
+                        esp_ae_rate_cvt_get_max_out_sample_num(music_resampler, mono_pcm.size(), &max_out_samples);
+                        output_pcm.resize(max_out_samples);
+                        uint32_t actual_output = max_out_samples;
+                        esp_ae_rate_cvt_process(music_resampler, reinterpret_cast<esp_ae_sample_t>(mono_pcm.data()),
+                                                mono_pcm.size(), reinterpret_cast<esp_ae_sample_t>(output_pcm.data()),
+                                                &actual_output);
+                        output_pcm.resize(actual_output);
+                        {
+                            std::lock_guard<std::mutex> output_lock(output_mutex_);
+                            codec_->OutputData(output_pcm);
+                        }
+                    } else {
+                        {
+                            std::lock_guard<std::mutex> output_lock(output_mutex_);
+                            codec_->OutputData(mono_pcm);
+                        }
+                    }
+                    last_output_time_ = std::chrono::steady_clock::now();
+                }
+            }
+
+            if (raw.consumed == 0) {
+                break;
+            }
+            raw.len -= raw.consumed;
+            raw.buffer += raw.consumed;
+        }
+    }
+
+    if (music_resampler != nullptr) {
+        esp_ae_rate_cvt_close(music_resampler);
+    }
+    heap_caps_free(in_buf);
+    heap_caps_free(out_buf);
+    esp_audio_simple_dec_close(decoder);
+    esp_audio_simple_dec_unregister_default();
+    esp_audio_dec_unregister_default();
+    http->Close();
+    ESP_LOGI(TAG, "Music playback stopped");
 }
 
 void AudioService::PlaySound(const std::string_view& ogg) {

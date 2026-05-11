@@ -44,6 +44,9 @@
 #define RLCD_WIDTH   400
 #define RLCD_HEIGHT  300
 
+// 本地音乐解析服务。开发期由 Mac 上的 feifei-mcp 提供，后期可换成公网地址。
+#define MUSIC_RESOLVER_ENDPOINT "http://192.168.0.101:8765/prepare"
+
 // LVGL 显示方向配置
 #define DISPLAY_MIRROR_X false
 #define DISPLAY_MIRROR_Y false

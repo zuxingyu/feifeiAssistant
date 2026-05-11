@@ -2,6 +2,8 @@
 #define __CUSTOM_LCD_DISPLAY_H__
 
 #include <driver/gpio.h>
+#include <string>
+#include <vector>
 #include "lcd_display.h"
 #include "home_data_store.h"
 
@@ -11,6 +13,11 @@ typedef struct _lv_timer_t lv_timer_t;
 enum ColorSelection {
     ColorBlack = 0,    
     ColorWhite = 0xff
+};
+
+struct MusicLyricLine {
+    int time_ms = -1;
+    std::string text;
 };
 
 // 反射式 LCD 所需的 SPI 引脚配置
@@ -137,6 +144,16 @@ private:
     lv_obj_t* music_time_total_label_ = nullptr;
     lv_obj_t* music_lyrics_label_ = nullptr;
     lv_obj_t* music_chat_label_ = nullptr;
+    lv_timer_t* music_chat_hide_timer_ = nullptr;
+    lv_timer_t* music_mock_timer_ = nullptr;
+    std::string music_title_text_;
+    std::string music_artist_text_;
+    std::string music_album_text_;
+    std::string music_lyric_text_;
+    std::vector<MusicLyricLine> music_lyric_lines_;
+    std::string music_playback_state_;
+    int music_position_ms_ = 0;
+    int music_duration_ms_ = 0;
 
     lv_obj_t* activation_page_ = nullptr;
     lv_obj_t* activation_top_bar_ = nullptr;
@@ -176,6 +193,13 @@ private:
     void UpdateHomeStatus(const char* status);
     void UpdateHomePage();
     static void HomeRefreshTimerCb(lv_timer_t* timer);
+    void UpdateMusicPage();
+    std::string BuildMusicLyricsWindow() const;
+    void UpdateMusicFromMessage(const char* role, const char* content);
+    void ShowMusicChatMessage(const char* role, const char* content);
+    void StartMusicMockPlayback();
+    static void MusicChatHideTimerCb(lv_timer_t* timer);
+    static void MusicMockTimerCb(lv_timer_t* timer);
 
 public:
     void SetupUI() override;

@@ -1,10 +1,13 @@
 #include <vector>
 #include <cstring>
 #include <ctime>
+#include <algorithm>
+#include <sstream>
 #include <freertos/FreeRTOS.h>
 #include <esp_lcd_panel_io.h>
 #include <esp_log.h>
 #include <esp_err.h>
+#include <cJSON.h>
 #include "custom_lcd_display.h"
 #include "lcd_display.h"
 #include "esp_lvgl_port.h"
@@ -139,6 +142,20 @@ CustomLcdDisplay::~CustomLcdDisplay() {
         if (Lock(30000)) {
             lv_timer_del(home_refresh_timer_);
             home_refresh_timer_ = nullptr;
+            Unlock();
+        }
+    }
+    if (music_chat_hide_timer_ != nullptr) {
+        if (Lock(30000)) {
+            lv_timer_del(music_chat_hide_timer_);
+            music_chat_hide_timer_ = nullptr;
+            Unlock();
+        }
+    }
+    if (music_mock_timer_ != nullptr) {
+        if (Lock(30000)) {
+            lv_timer_del(music_mock_timer_);
+            music_mock_timer_ = nullptr;
             Unlock();
         }
     }
@@ -383,6 +400,176 @@ static const char* get_weather_icon(const std::string& desc) {
     if (desc.find("雪") != std::string::npos) return FONT_AWESOME_SNOWFLAKE;
     if (desc.find("雾") != std::string::npos || desc.find("霾") != std::string::npos) return FONT_AWESOME_SMOG;
     return FONT_AWESOME_SUN;  // 默认晴天
+}
+
+static const char* get_json_string(cJSON* root, const char* key) {
+    cJSON* item = cJSON_GetObjectItem(root, key);
+    return cJSON_IsString(item) ? item->valuestring : nullptr;
+}
+
+static bool get_json_int(cJSON* root, const char* key, int& value) {
+    cJSON* item = cJSON_GetObjectItem(root, key);
+    if (!cJSON_IsNumber(item)) {
+        return false;
+    }
+    value = item->valueint;
+    return true;
+}
+
+static bool is_tool_trace_text(const char* content) {
+    if (content == nullptr) {
+        return false;
+    }
+    while (*content == ' ' || *content == '\t' || *content == '\n' || *content == '\r') {
+        ++content;
+    }
+    return strncmp(content, "% self.", 7) == 0 ||
+           strncmp(content, "%self.", 6) == 0 ||
+           strncmp(content, "self.music.", 11) == 0;
+}
+
+static std::string format_music_time(int ms) {
+    if (ms < 0) {
+        ms = 0;
+    }
+    int total_seconds = ms / 1000;
+    int minutes = total_seconds / 60;
+    int seconds = total_seconds % 60;
+    char buf[16];
+    snprintf(buf, sizeof(buf), "%d:%02d", minutes, seconds);
+    return buf;
+}
+
+struct MockLyricLine {
+    int time_ms;
+    const char* text;
+};
+
+static constexpr MockLyricLine kMockLyrics[] = {
+    {0, "准备播放一首测试歌曲"},
+    {5000, "一闪一闪亮晶晶"},
+    {12000, "满天都是小星星"},
+    {19000, "挂在天上放光明"},
+    {26000, "好像许多小眼睛"},
+    {34000, "音乐页进度正在更新"},
+    {43000, "后续会接入真实播放器"},
+    {52000, "歌词会跟随播放时间滚动"},
+    {61000, "现在先验证屏幕显示链路"},
+    {72000, "播放测试继续进行"},
+    {84000, "一闪一闪亮晶晶"},
+    {96000, "满天都是小星星"},
+    {108000, "挂在天上放光明"},
+    {120000, "好像许多小眼睛"},
+    {132000, "测试歌曲即将结束"},
+    {144000, "等待下一步接入音频"}
+};
+
+static int find_mock_lyric_index(int position_ms) {
+    int index = 0;
+    for (int i = 0; i < static_cast<int>(sizeof(kMockLyrics) / sizeof(kMockLyrics[0])); ++i) {
+        if (kMockLyrics[i].time_ms <= position_ms) {
+            index = i;
+        } else {
+            break;
+        }
+    }
+    return index;
+}
+
+static std::string trim_text(const std::string& text) {
+    size_t start = 0;
+    while (start < text.size() && (text[start] == ' ' || text[start] == '\t' || text[start] == '\r')) {
+        ++start;
+    }
+    size_t end = text.size();
+    while (end > start && (text[end - 1] == ' ' || text[end - 1] == '\t' || text[end - 1] == '\r')) {
+        --end;
+    }
+    return text.substr(start, end - start);
+}
+
+static int parse_lrc_time_ms(const std::string& tag) {
+    int minutes = 0;
+    int seconds = 0;
+    int fraction = 0;
+    int fraction_digits = 0;
+    size_t pos = 0;
+    while (pos < tag.size() && tag[pos] >= '0' && tag[pos] <= '9') {
+        minutes = minutes * 10 + (tag[pos++] - '0');
+    }
+    if (pos >= tag.size() || tag[pos++] != ':') {
+        return -1;
+    }
+    while (pos < tag.size() && tag[pos] >= '0' && tag[pos] <= '9') {
+        seconds = seconds * 10 + (tag[pos++] - '0');
+    }
+    if (pos < tag.size() && tag[pos] == '.') {
+        ++pos;
+        while (pos < tag.size() && tag[pos] >= '0' && tag[pos] <= '9' && fraction_digits < 3) {
+            fraction = fraction * 10 + (tag[pos++] - '0');
+            ++fraction_digits;
+        }
+    }
+    while (fraction_digits > 0 && fraction_digits < 3) {
+        fraction *= 10;
+        ++fraction_digits;
+    }
+    return (minutes * 60 + seconds) * 1000 + fraction;
+}
+
+static std::vector<MusicLyricLine> parse_music_lyrics(const std::string& lyric_text) {
+    std::vector<MusicLyricLine> lines;
+    std::istringstream stream(lyric_text);
+    std::string line;
+    while (std::getline(stream, line)) {
+        std::vector<int> times;
+        std::string plain;
+        size_t pos = 0;
+        while (pos < line.size()) {
+            if (line[pos] == '[') {
+                auto close = line.find(']', pos + 1);
+                if (close != std::string::npos) {
+                    auto tag = line.substr(pos + 1, close - pos - 1);
+                    int time_ms = parse_lrc_time_ms(tag);
+                    if (time_ms >= 0) {
+                        times.push_back(time_ms);
+                        pos = close + 1;
+                        continue;
+                    }
+                    if (tag.find(':') != std::string::npos) {
+                        pos = close + 1;
+                        continue;
+                    }
+                }
+            }
+            plain.push_back(line[pos++]);
+        }
+
+        plain = trim_text(plain);
+        if (plain.empty()) {
+            continue;
+        }
+        if (times.empty()) {
+            lines.push_back({-1, plain});
+        } else {
+            for (auto time_ms : times) {
+                lines.push_back({time_ms, plain});
+            }
+        }
+    }
+    std::sort(lines.begin(), lines.end(), [](const auto& a, const auto& b) {
+        if (a.time_ms < 0 && b.time_ms < 0) {
+            return false;
+        }
+        if (a.time_ms < 0) {
+            return false;
+        }
+        if (b.time_ms < 0) {
+            return true;
+        }
+        return a.time_ms < b.time_ms;
+    });
+    return lines;
 }
 
 lv_obj_t* CustomLcdDisplay::CreateFullScreenPage(lv_obj_t* screen) {
@@ -770,9 +957,11 @@ void CustomLcdDisplay::CreateHomePage(lv_obj_t* screen) {
     }
 
     // ====================== 课程区 ======================
-    // 使用 flex_grow 填充剩余空间，自动适配内容
+    // 中间课程区使用固定的上下两块：今日/明日各占约三行，避免内容少时底部留白过大。
     auto* course_area = lv_obj_create(main_area);
     lv_obj_set_width(course_area, LV_HOR_RES);
+    // 课程区总高度由 flex_grow 自动占用剩余空间：
+    // 屏幕300 - 顶栏28 - 时间条44 - 天气条76 - 底部小智条24 ≈ 128px。
     lv_obj_set_flex_grow(course_area, 1);
     lv_obj_set_style_radius(course_area, 0, 0);
     lv_obj_set_style_bg_color(course_area, lv_color_white(), 0);
@@ -781,53 +970,83 @@ void CustomLcdDisplay::CreateHomePage(lv_obj_t* screen) {
     lv_obj_set_style_pad_right(course_area, 14, 0);
     lv_obj_set_style_pad_top(course_area, 0, 0);
     lv_obj_set_style_pad_bottom(course_area, 0, 0);
-    lv_obj_set_style_pad_row(course_area, 2, 0);
+    lv_obj_set_style_pad_row(course_area, 0, 0);
+    lv_obj_set_style_margin_top(course_area, -4, 0);  // 课程区整体上边距：负数会更贴近天气栏，正数会下移。
     lv_obj_set_scrollbar_mode(course_area, LV_SCROLLBAR_MODE_OFF);
     lv_obj_set_flex_flow(course_area, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(course_area, LV_FLEX_ALIGN_START,
                           LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER);
 
+    auto create_course_block = [](lv_obj_t* parent, int height) {
+        auto* block = lv_obj_create(parent);
+        lv_obj_set_size(block, LV_HOR_RES - 28, height);  // 单个课程块高度：标题行 + 课程内容行。
+        lv_obj_set_style_radius(block, 0, 0);
+        lv_obj_set_style_bg_color(block, lv_color_white(), 0);
+        lv_obj_set_style_border_width(block, 0, 0);
+        lv_obj_set_style_pad_left(block, 0, 0);
+        lv_obj_set_style_pad_right(block, 0, 0);
+        lv_obj_set_style_pad_top(block, 0, 0);
+        lv_obj_set_style_pad_bottom(block, 0, 0);
+        lv_obj_set_style_pad_row(block, 0, 0);
+        lv_obj_set_scrollbar_mode(block, LV_SCROLLBAR_MODE_OFF);
+        lv_obj_set_flex_flow(block, LV_FLEX_FLOW_COLUMN);
+        lv_obj_set_flex_align(block, LV_FLEX_ALIGN_START,
+                              LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER);
+        return block;
+    };
+
+    auto* today_block = create_course_block(course_area, 54);  // 今日课程块：标题1行 + 上午/下午两行，略放松显示。
+
     // 今日课程标题（14号字）
-    home_today_title_label_ = lv_label_create(course_area);
+    home_today_title_label_ = lv_label_create(today_block);
     lv_obj_set_width(home_today_title_label_, LV_HOR_RES - 28);
     lv_obj_set_style_text_font(home_today_title_label_, &alibaba_puhui_14, 0);
     lv_obj_set_style_text_color(home_today_title_label_, lv_color_black(), 0);
+    lv_obj_set_height(home_today_title_label_, 14);  // 今日课程标题行高度。
     lv_label_set_text(home_today_title_label_, "今日课程");
 
     // 今日课程内容（14号字）
-    home_today_courses_label_ = lv_label_create(course_area);
+    home_today_courses_label_ = lv_label_create(today_block);
     lv_obj_set_width(home_today_courses_label_, LV_HOR_RES - 28);
+    lv_obj_set_height(home_today_courses_label_, 40);  // 今日课程内容高度：用于显示上午/下午两行。
     lv_obj_set_style_text_font(home_today_courses_label_, &alibaba_puhui_14, 0);
     lv_obj_set_style_text_color(home_today_courses_label_, lv_color_black(), 0);
+    lv_obj_set_style_text_line_space(home_today_courses_label_, 0, 0);
     lv_label_set_long_mode(home_today_courses_label_, LV_LABEL_LONG_WRAP);
     lv_label_set_text(home_today_courses_label_, "未配置课程表");
 
     // ===== 分隔线（今日课程和明日课程之间）=====
     auto* course_divider = lv_obj_create(course_area);
-    lv_obj_set_size(course_divider, LV_HOR_RES - 28, 1);
+    lv_obj_set_size(course_divider, LV_HOR_RES - 28, 1);  // 今日/明日之间的分隔线高度。
     lv_obj_set_style_radius(course_divider, 0, 0);
     lv_obj_set_style_bg_color(course_divider, lv_color_black(), 0);
     lv_obj_set_style_border_width(course_divider, 0, 0);
     lv_obj_set_style_pad_all(course_divider, 0, 0);
 
+    auto* tomorrow_block = create_course_block(course_area, 72);  // 明日课程块：标题1行 + 上午/下午两行。
+    lv_obj_set_style_margin_top(tomorrow_block, 0, 0);  // 明日课程整体上移：负数越大，和今日课程越近。
+
     // 明日课程标题（14号字）
-    home_tomorrow_title_label_ = lv_label_create(course_area);
+    home_tomorrow_title_label_ = lv_label_create(tomorrow_block);
     lv_obj_set_width(home_tomorrow_title_label_, LV_HOR_RES - 28);
     lv_obj_set_style_text_font(home_tomorrow_title_label_, &alibaba_puhui_14, 0);
     lv_obj_set_style_text_color(home_tomorrow_title_label_, lv_color_black(), 0);
+    lv_obj_set_height(home_tomorrow_title_label_, 14);  // 明日课程标题行高度。
     lv_label_set_text(home_tomorrow_title_label_, "明日课程");
 
     // 明日课程内容（14号字）
-    home_tomorrow_courses_label_ = lv_label_create(course_area);
+    home_tomorrow_courses_label_ = lv_label_create(tomorrow_block);
     lv_obj_set_width(home_tomorrow_courses_label_, LV_HOR_RES - 28);
+    lv_obj_set_height(home_tomorrow_courses_label_, 58);  // 明日课程内容高度：保证上午/下午两行，同时减少底部空白。
     lv_obj_set_style_text_font(home_tomorrow_courses_label_, &alibaba_puhui_14, 0);
     lv_obj_set_style_text_color(home_tomorrow_courses_label_, lv_color_black(), 0);
+    lv_obj_set_style_text_line_space(home_tomorrow_courses_label_, 0, 0);
     lv_label_set_long_mode(home_tomorrow_courses_label_, LV_LABEL_LONG_WRAP);
     lv_label_set_text(home_tomorrow_courses_label_, "未配置课程表");
 
     // ====================== 底部状态条 ======================
     auto* bottom_strip = lv_obj_create(main_area);
-    lv_obj_set_size(bottom_strip, LV_HOR_RES, 24);
+    lv_obj_set_size(bottom_strip, LV_HOR_RES, 24);  // 首页底部小智对话条高度，当前为单行。
     lv_obj_set_style_radius(bottom_strip, 0, 0);
     lv_obj_set_style_bg_color(bottom_strip, lv_color_white(), 0);
     lv_obj_set_style_border_width(bottom_strip, 1, 0);
@@ -835,15 +1054,17 @@ void CustomLcdDisplay::CreateHomePage(lv_obj_t* screen) {
     lv_obj_set_style_border_color(bottom_strip, lv_color_black(), 0);
     lv_obj_set_style_pad_left(bottom_strip, 14, 0);
     lv_obj_set_style_pad_right(bottom_strip, 14, 0);
-    lv_obj_set_style_pad_top(bottom_strip, 4, 0);
-    lv_obj_set_style_pad_bottom(bottom_strip, 4, 0);
+    lv_obj_set_style_pad_top(bottom_strip, 2, 0);
+    lv_obj_set_style_pad_bottom(bottom_strip, 2, 0);
     lv_obj_set_scrollbar_mode(bottom_strip, LV_SCROLLBAR_MODE_OFF);
 
     home_bottom_status_label_ = lv_label_create(bottom_strip);
     lv_obj_set_width(home_bottom_status_label_, LV_HOR_RES - 28);
-    lv_obj_set_style_text_font(home_bottom_status_label_, &alibaba_puhui_16, 0);
+    lv_obj_set_style_text_font(home_bottom_status_label_, &alibaba_puhui_14, 0);
     lv_obj_set_style_text_color(home_bottom_status_label_, lv_color_black(), 0);
     lv_obj_set_style_text_align(home_bottom_status_label_, LV_TEXT_ALIGN_LEFT, 0);
+    lv_obj_set_height(home_bottom_status_label_, 18);
+    lv_label_set_long_mode(home_bottom_status_label_, LV_LABEL_LONG_DOT);
     lv_label_set_text(home_bottom_status_label_,
                       std::string("小智: ").append(Lang::Strings::STANDBY).c_str());
 
@@ -939,7 +1160,7 @@ void CustomLcdDisplay::CreateMusicPage(lv_obj_t* screen) {
 
     // —— 进度条 ——
     auto* progress_area = lv_obj_create(main_area);
-    lv_obj_set_size(progress_area, LV_HOR_RES, 40);
+    lv_obj_set_size(progress_area, LV_HOR_RES, 46);
     lv_obj_set_style_radius(progress_area, 0, 0);
     lv_obj_set_style_bg_color(progress_area, lv_color_white(), 0);
     lv_obj_set_style_border_width(progress_area, 1, 0);
@@ -947,13 +1168,14 @@ void CustomLcdDisplay::CreateMusicPage(lv_obj_t* screen) {
     lv_obj_set_style_border_color(progress_area, lv_color_black(), 0);
     lv_obj_set_style_pad_left(progress_area, 14, 0);
     lv_obj_set_style_pad_right(progress_area, 14, 0);
-    lv_obj_set_style_pad_top(progress_area, 4, 0);
+    lv_obj_set_style_pad_top(progress_area, 5, 0);
+    lv_obj_set_style_pad_bottom(progress_area, 4, 0);
     lv_obj_set_scrollbar_mode(progress_area, LV_SCROLLBAR_MODE_OFF);
 
     // 进度条背景（居中放置）
     music_progress_bar_ = lv_obj_create(progress_area);
     lv_obj_set_size(music_progress_bar_, LV_HOR_RES - 28, 6);
-    lv_obj_align(music_progress_bar_, LV_ALIGN_TOP_MID, 0, 4);
+    lv_obj_align(music_progress_bar_, LV_ALIGN_TOP_MID, 0, 6);
     lv_obj_set_style_radius(music_progress_bar_, 0, 0);
     lv_obj_set_style_bg_color(music_progress_bar_, lv_color_white(), 0);
     lv_obj_set_style_border_width(music_progress_bar_, 1, 0);
@@ -974,22 +1196,22 @@ void CustomLcdDisplay::CreateMusicPage(lv_obj_t* screen) {
     music_time_cur_label_ = lv_label_create(progress_area);
     lv_obj_set_style_text_font(music_time_cur_label_, &alibaba_puhui_14, 0);
     lv_obj_set_style_text_color(music_time_cur_label_, lv_color_black(), 0);
-    lv_obj_align(music_time_cur_label_, LV_ALIGN_BOTTOM_LEFT, 0, 0);
+    lv_obj_align(music_time_cur_label_, LV_ALIGN_BOTTOM_LEFT, 0, 1);
     lv_label_set_text(music_time_cur_label_, "0:00");
 
     music_time_total_label_ = lv_label_create(progress_area);
     lv_obj_set_style_text_font(music_time_total_label_, &alibaba_puhui_14, 0);
     lv_obj_set_style_text_color(music_time_total_label_, lv_color_black(), 0);
-    lv_obj_align(music_time_total_label_, LV_ALIGN_BOTTOM_RIGHT, 0, 0);
+    lv_obj_align(music_time_total_label_, LV_ALIGN_BOTTOM_RIGHT, 0, 1);
     lv_label_set_text(music_time_total_label_, "0:00");
 
     // —— 控制按钮（用 Font Awesome 图标） ——
     auto* controls = lv_obj_create(main_area);
-    lv_obj_set_size(controls, LV_HOR_RES, 36);
+    lv_obj_set_size(controls, LV_HOR_RES, 22);
     lv_obj_set_style_radius(controls, 0, 0);
     lv_obj_set_style_bg_color(controls, lv_color_white(), 0);
     lv_obj_set_style_border_width(controls, 0, 0);
-    lv_obj_set_style_pad_all(controls, 2, 0);
+    lv_obj_set_style_pad_all(controls, 0, 0);
     lv_obj_set_scrollbar_mode(controls, LV_SCROLLBAR_MODE_OFF);
     lv_obj_set_flex_flow(controls, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(controls, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
@@ -998,7 +1220,7 @@ void CustomLcdDisplay::CreateMusicPage(lv_obj_t* screen) {
     lv_obj_t* btn_prev = lv_label_create(controls);
     lv_obj_set_style_text_font(btn_prev, &font_awesome_16_4, 0);
     lv_obj_set_style_text_color(btn_prev, lv_color_black(), 0);
-    lv_obj_set_style_pad_right(btn_prev, 14, 0);
+    lv_obj_set_style_pad_right(btn_prev, 12, 0);
     lv_label_set_text(btn_prev, FONT_AWESOME_BACKWARD_STEP);
 
     lv_obj_t* btn_play = lv_label_create(controls);
@@ -1010,48 +1232,345 @@ void CustomLcdDisplay::CreateMusicPage(lv_obj_t* screen) {
     lv_obj_t* btn_next = lv_label_create(controls);
     lv_obj_set_style_text_font(btn_next, &font_awesome_16_4, 0);
     lv_obj_set_style_text_color(btn_next, lv_color_black(), 0);
-    lv_obj_set_style_pad_left(btn_next, 14, 0);
+    lv_obj_set_style_pad_left(btn_next, 12, 0);
     lv_label_set_text(btn_next, FONT_AWESOME_FORWARD_STEP);
 
-    // —— 歌词区 ——
+    // —— 歌词区：固定高度，只包裹多行歌词，下方留出小智对话条 ——
     auto* lyrics_box = lv_obj_create(main_area);
-    lv_obj_set_width(lyrics_box, LV_HOR_RES - 28);
-    lv_obj_set_flex_grow(lyrics_box, 1);
+    lv_obj_set_width(lyrics_box, LV_HOR_RES - 48);
+    lv_obj_set_height(lyrics_box, 78);
     lv_obj_set_style_radius(lyrics_box, 0, 0);
     lv_obj_set_style_bg_color(lyrics_box, lv_color_white(), 0);
     lv_obj_set_style_border_width(lyrics_box, 1, 0);
     lv_obj_set_style_border_color(lyrics_box, lv_color_black(), 0);
-    lv_obj_set_style_pad_all(lyrics_box, 6, 0);
-    lv_obj_set_style_margin_left(lyrics_box, 14, 0);
-    lv_obj_set_style_margin_right(lyrics_box, 14, 0);
-    lv_obj_set_style_margin_bottom(lyrics_box, 4, 0);
+    lv_obj_set_style_pad_left(lyrics_box, 5, 0);
+    lv_obj_set_style_pad_right(lyrics_box, 5, 0);
+    lv_obj_set_style_pad_top(lyrics_box, 3, 0);
+    lv_obj_set_style_pad_bottom(lyrics_box, 3, 0);
+    lv_obj_set_style_margin_left(lyrics_box, 24, 0);
+    lv_obj_set_style_margin_right(lyrics_box, 24, 0);
+    lv_obj_set_style_margin_top(lyrics_box, 1, 0);
+    lv_obj_set_style_margin_bottom(lyrics_box, 1, 0);
     lv_obj_set_scrollbar_mode(lyrics_box, LV_SCROLLBAR_MODE_OFF);
 
     music_lyrics_label_ = lv_label_create(lyrics_box);
-    lv_obj_set_width(music_lyrics_label_, LV_HOR_RES - 44);
+    lv_obj_set_width(music_lyrics_label_, LV_HOR_RES - 64);
     lv_obj_set_style_text_font(music_lyrics_label_, &alibaba_puhui_14, 0);
     lv_obj_set_style_text_color(music_lyrics_label_, lv_color_black(), 0);
     lv_obj_set_style_text_align(music_lyrics_label_, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_line_space(music_lyrics_label_, -3, 0);
+    lv_obj_set_style_pad_top(music_lyrics_label_, 0, 0);
     lv_label_set_long_mode(music_lyrics_label_, LV_LABEL_LONG_WRAP);
     lv_label_set_text(music_lyrics_label_, "暂无歌词");
 
-    // —— 聊天浮层（默认隐藏，唤醒小智时显示）——
-    music_chat_label_ = lv_label_create(music_page_);
-    lv_obj_set_width(music_chat_label_, LV_HOR_RES - 16);
+    // —— 底部小智对话条：常驻占位，唤醒/对话时显示最新内容 ——
+    auto* bottom_strip = lv_obj_create(main_area);
+    lv_obj_set_size(bottom_strip, LV_HOR_RES, 24);
+    lv_obj_set_style_radius(bottom_strip, 0, 0);
+    lv_obj_set_style_bg_color(bottom_strip, lv_color_white(), 0);
+    lv_obj_set_style_border_width(bottom_strip, 1, 0);
+    lv_obj_set_style_border_side(bottom_strip, LV_BORDER_SIDE_TOP, 0);
+    lv_obj_set_style_border_color(bottom_strip, lv_color_black(), 0);
+    lv_obj_set_style_pad_left(bottom_strip, 14, 0);
+    lv_obj_set_style_pad_right(bottom_strip, 14, 0);
+    lv_obj_set_style_pad_top(bottom_strip, 2, 0);
+    lv_obj_set_style_pad_bottom(bottom_strip, 2, 0);
+    lv_obj_set_scrollbar_mode(bottom_strip, LV_SCROLLBAR_MODE_OFF);
+
+    music_chat_label_ = lv_label_create(bottom_strip);
+    lv_obj_set_width(music_chat_label_, LV_HOR_RES - 28);
     lv_obj_set_style_text_font(music_chat_label_, &alibaba_puhui_14, 0);
     lv_obj_set_style_text_color(music_chat_label_, lv_color_black(), 0);
-    lv_obj_set_style_bg_color(music_chat_label_, lv_color_white(), 0);
-    lv_obj_set_style_border_width(music_chat_label_, 1, 0);
-    lv_obj_set_style_border_side(music_chat_label_, LV_BORDER_SIDE_TOP, 0);
-    lv_obj_set_style_border_color(music_chat_label_, lv_color_black(), 0);
-    lv_obj_set_style_pad_all(music_chat_label_, 4, 0);
-    lv_obj_align(music_chat_label_, LV_ALIGN_BOTTOM_MID, 0, 0);
-    lv_label_set_text(music_chat_label_, "");
-    lv_obj_add_flag(music_chat_label_, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_style_text_align(music_chat_label_, LV_TEXT_ALIGN_LEFT, 0);
+    lv_obj_set_height(music_chat_label_, 18);
+    lv_label_set_long_mode(music_chat_label_, LV_LABEL_LONG_DOT);
+    lv_label_set_text(music_chat_label_, "小智: 待命");
 
     UpdateTopBar(music_temp_label_, music_humidity_label_, music_datetime_label_, music_battery_label_);
 
     lv_obj_add_flag(music_page_, LV_OBJ_FLAG_HIDDEN);
+}
+
+void CustomLcdDisplay::UpdateMusicPage() {
+    const std::string title = music_title_text_.empty() ? "未在播放" : music_title_text_;
+    if (music_title_label_ != nullptr) {
+        lv_label_set_text(music_title_label_, title.c_str());
+    }
+
+    std::string artist_line = music_artist_text_;
+    if (!music_album_text_.empty()) {
+        if (!artist_line.empty()) {
+            artist_line += " | ";
+        }
+        artist_line += music_album_text_;
+    }
+    if (!music_playback_state_.empty()) {
+        if (!artist_line.empty()) {
+            artist_line += "  ";
+        }
+        artist_line += music_playback_state_;
+    }
+    if (music_artist_label_ != nullptr) {
+        lv_label_set_text(music_artist_label_, artist_line.c_str());
+    }
+
+    int duration = std::max(music_duration_ms_, 0);
+    int position = std::max(music_position_ms_, 0);
+    if (duration > 0 && position > duration) {
+        position = duration;
+    }
+
+    if (music_progress_fill_ != nullptr) {
+        int max_width = LV_HOR_RES - 30;
+        int fill_width = 0;
+        if (duration > 0) {
+            fill_width = (max_width * position) / duration;
+        }
+        lv_obj_set_width(music_progress_fill_, fill_width);
+    }
+    if (music_time_cur_label_ != nullptr) {
+        lv_label_set_text(music_time_cur_label_, format_music_time(position).c_str());
+    }
+    if (music_time_total_label_ != nullptr) {
+        lv_label_set_text(music_time_total_label_, format_music_time(duration).c_str());
+    }
+
+    if (music_lyrics_label_ != nullptr) {
+        std::string lyric = BuildMusicLyricsWindow();
+        if (lyric.empty()) {
+            lyric = music_title_text_.empty() ? "暂无歌词" : "等待歌词...";
+        }
+        lv_label_set_text(music_lyrics_label_, lyric.c_str());
+    }
+}
+
+std::string CustomLcdDisplay::BuildMusicLyricsWindow() const {
+    if (music_title_text_ == "小星星" && music_artist_text_ == "苗苗播放器") {
+        constexpr int lyric_count = static_cast<int>(sizeof(kMockLyrics) / sizeof(kMockLyrics[0]));
+        int current_index = find_mock_lyric_index(music_position_ms_);
+        int start = std::max(0, current_index - 1);
+        int end = std::min(lyric_count - 1, start + 3);
+        start = std::max(0, end - 3);
+
+        std::string text;
+        for (int i = start; i <= end; ++i) {
+            if (!text.empty()) {
+                text += "\n";
+            }
+            if (i == current_index) {
+                text += "> ";
+            } else {
+                text += "  ";
+            }
+            text += kMockLyrics[i].text;
+        }
+        return text;
+    }
+
+    if (!music_lyric_lines_.empty()) {
+        int current_index = 0;
+        bool has_timed_line = false;
+        for (int i = 0; i < static_cast<int>(music_lyric_lines_.size()); ++i) {
+            if (music_lyric_lines_[i].time_ms >= 0) {
+                has_timed_line = true;
+                if (music_lyric_lines_[i].time_ms <= music_position_ms_) {
+                    current_index = i;
+                } else {
+                    break;
+                }
+            }
+        }
+        if (!has_timed_line) {
+            current_index = 0;
+        }
+
+        int start = has_timed_line ? std::max(0, current_index - 1) : 0;
+        int end = std::min(static_cast<int>(music_lyric_lines_.size()) - 1, start + 3);
+        start = std::max(0, end - 3);
+
+        std::string text;
+        for (int i = start; i <= end; ++i) {
+            if (!text.empty()) {
+                text += "\n";
+            }
+            text += (has_timed_line && i == current_index) ? "> " : "  ";
+            text += music_lyric_lines_[i].text;
+        }
+        return text;
+    }
+
+    return music_lyric_text_;
+}
+
+void CustomLcdDisplay::UpdateMusicFromMessage(const char* role, const char* content) {
+    if (content == nullptr || content[0] == '\0') {
+        return;
+    }
+
+    const bool is_lyric_role = role != nullptr && strcmp(role, "lyric") == 0;
+    const bool is_music_role = role != nullptr && strcmp(role, "music") == 0;
+
+    if (is_lyric_role) {
+        music_lyric_text_ = content;
+        music_lyric_lines_ = parse_music_lyrics(music_lyric_text_);
+        UpdateMusicPage();
+        return;
+    }
+
+    bool updated_music = false;
+    cJSON* root = cJSON_Parse(content);
+    if (cJSON_IsObject(root)) {
+        const char* type = get_json_string(root, "type");
+        cJSON* payload = cJSON_GetObjectItem(root, "payload");
+        cJSON* src = cJSON_IsObject(payload) ? payload : root;
+        bool looks_like_music = is_music_role ||
+            (type != nullptr && (strcmp(type, "music") == 0 || strcmp(type, "player") == 0));
+
+        const char* title = get_json_string(src, "title");
+        if (title == nullptr) title = get_json_string(src, "song");
+        if (title == nullptr) title = get_json_string(src, "song_name");
+        const char* artist = get_json_string(src, "artist");
+        if (artist == nullptr) artist = get_json_string(src, "artist_name");
+        const char* album = get_json_string(src, "album");
+        const char* lyric = get_json_string(src, "lyric");
+        const char* state = get_json_string(src, "state");
+
+        if (title != nullptr || artist != nullptr || album != nullptr || lyric != nullptr || looks_like_music) {
+            updated_music = true;
+            if (title != nullptr) music_title_text_ = title;
+            if (artist != nullptr) music_artist_text_ = artist;
+            if (album != nullptr) music_album_text_ = album;
+            if (lyric != nullptr) {
+                music_lyric_text_ = lyric;
+                music_lyric_lines_ = parse_music_lyrics(music_lyric_text_);
+            }
+            if (state != nullptr) music_playback_state_ = state;
+
+            int value = 0;
+            if (get_json_int(src, "position_ms", value) || get_json_int(src, "current_ms", value) ||
+                get_json_int(src, "progress_ms", value)) {
+                music_position_ms_ = value;
+            } else if (get_json_int(src, "position_sec", value) || get_json_int(src, "current_sec", value)) {
+                music_position_ms_ = value * 1000;
+            }
+
+            if (get_json_int(src, "duration_ms", value) || get_json_int(src, "total_ms", value)) {
+                music_duration_ms_ = value;
+            } else if (get_json_int(src, "duration_sec", value) || get_json_int(src, "total_sec", value)) {
+                music_duration_ms_ = value * 1000;
+            }
+        }
+    }
+    if (root != nullptr) {
+        cJSON_Delete(root);
+    }
+
+    if (!updated_music && is_music_role) {
+        const char* dash = strstr(content, " - ");
+        if (dash != nullptr) {
+            music_artist_text_.assign(content, dash - content);
+            music_title_text_ = dash + 3;
+        } else {
+            music_artist_text_.clear();
+            music_title_text_ = content;
+        }
+        updated_music = true;
+    }
+
+    if (!updated_music && role != nullptr && strcmp(role, "system") == 0 && strstr(content, " - ") != nullptr) {
+        const char* dash = strstr(content, " - ");
+        music_artist_text_.assign(content, dash - content);
+        music_title_text_ = dash + 3;
+        updated_music = true;
+    }
+
+    if (updated_music) {
+        if (music_playback_state_ == "播放中" && music_duration_ms_ > 0) {
+            if (music_mock_timer_ == nullptr) {
+                music_mock_timer_ = lv_timer_create(MusicMockTimerCb, 1000, this);
+            } else {
+                lv_timer_reset(music_mock_timer_);
+                lv_timer_resume(music_mock_timer_);
+            }
+        } else if (!(music_title_text_ == "小星星" && music_artist_text_ == "苗苗播放器") &&
+                   music_mock_timer_ != nullptr) {
+            lv_timer_pause(music_mock_timer_);
+        }
+        SwitchPage(UiPage::kMusic);
+        UpdateTopBar(music_temp_label_, music_humidity_label_, music_datetime_label_, music_battery_label_);
+        UpdateMusicPage();
+    }
+}
+
+void CustomLcdDisplay::MusicChatHideTimerCb(lv_timer_t* timer) {
+    auto* self = timer != nullptr ? static_cast<CustomLcdDisplay*>(lv_timer_get_user_data(timer)) : nullptr;
+    if (self == nullptr) {
+        return;
+    }
+    if (self->music_chat_label_ != nullptr) {
+        lv_label_set_text(self->music_chat_label_, "小智: 待命");
+    }
+    lv_timer_del(timer);
+    self->music_chat_hide_timer_ = nullptr;
+}
+
+void CustomLcdDisplay::ShowMusicChatMessage(const char* role, const char* content) {
+    if (music_chat_label_ == nullptr || content == nullptr || content[0] == '\0') {
+        return;
+    }
+    if (is_tool_trace_text(content)) {
+        return;
+    }
+    std::string prefix = "小智: ";
+    if (role != nullptr && strcmp(role, "user") == 0) {
+        prefix = "我: ";
+    }
+    lv_label_set_text(music_chat_label_, (prefix + content).c_str());
+
+    if (music_chat_hide_timer_ != nullptr) {
+        lv_timer_del(music_chat_hide_timer_);
+        music_chat_hide_timer_ = nullptr;
+    }
+    music_chat_hide_timer_ = lv_timer_create(MusicChatHideTimerCb, 3000, this);
+    lv_timer_set_repeat_count(music_chat_hide_timer_, 1);
+}
+
+void CustomLcdDisplay::StartMusicMockPlayback() {
+    music_title_text_ = "小星星";
+    music_artist_text_ = "苗苗播放器";
+    music_album_text_ = "屏幕测试";
+    music_playback_state_ = "播放中";
+    music_duration_ms_ = 150000;
+    music_position_ms_ = 0;
+    music_lyric_text_ = kMockLyrics[0].text;
+    music_lyric_lines_.clear();
+
+    UpdateMusicPage();
+
+    if (music_mock_timer_ == nullptr) {
+        music_mock_timer_ = lv_timer_create(MusicMockTimerCb, 1000, this);
+    } else {
+        lv_timer_reset(music_mock_timer_);
+        lv_timer_resume(music_mock_timer_);
+    }
+}
+
+void CustomLcdDisplay::MusicMockTimerCb(lv_timer_t* timer) {
+    auto* self = timer != nullptr ? static_cast<CustomLcdDisplay*>(lv_timer_get_user_data(timer)) : nullptr;
+    if (self == nullptr) {
+        return;
+    }
+
+    self->music_position_ms_ += 1000;
+    if (self->music_duration_ms_ > 0 && self->music_position_ms_ > self->music_duration_ms_) {
+        self->music_position_ms_ = self->music_duration_ms_;
+        lv_timer_pause(timer);
+    }
+
+    if (self->music_title_text_ == "小星星" && self->music_artist_text_ == "苗苗播放器") {
+        self->music_lyric_text_ = kMockLyrics[find_mock_lyric_index(self->music_position_ms_)].text;
+    }
+    self->UpdateMusicPage();
 }
 
 void CustomLcdDisplay::CreateActivationPage(lv_obj_t* screen) {
@@ -1160,6 +1679,11 @@ void CustomLcdDisplay::CyclePage() {
     }
     if (current_page_ == UiPage::kHome) {
         SwitchPage(UiPage::kMusic);
+        if (music_title_text_.empty()) {
+            StartMusicMockPlayback();
+        } else {
+            UpdateMusicPage();
+        }
     } else if (current_page_ == UiPage::kMusic) {
         SwitchPage(UiPage::kHome);
     }
@@ -1282,6 +1806,8 @@ void CustomLcdDisplay::TopBarTimerCb(lv_timer_t* timer) {
     // 同步更新主页顶栏的温度/湿度/电池（主页不显示时间，datetime_label 传 nullptr）
     self->UpdateTopBar(self->home_top_temp_label_, self->home_top_humidity_label_,
                        nullptr, self->home_top_battery_label_);
+    self->UpdateTopBar(self->music_temp_label_, self->music_humidity_label_,
+                       self->music_datetime_label_, self->music_battery_label_);
 }
 
 void CustomLcdDisplay::UpdateTopBar(lv_obj_t* temp_label, lv_obj_t* humidity_label, lv_obj_t* datetime_label, lv_obj_t* battery_label) {
@@ -1697,14 +2223,19 @@ void CustomLcdDisplay::SetStatus(const char* status) {
         }
         UpdateActivationCode(nullptr);
     } else if (strcmp(safe_status, Lang::Strings::STANDBY) == 0) {
-        if (current_page_ == UiPage::kMusic) {
+        if (current_page_ == UiPage::kBoot || current_page_ == UiPage::kWifiConfig ||
+            current_page_ == UiPage::kActivation) {
             SwitchPage(UiPage::kHome);
+            UpdateHomePage();  // 立即刷新首页数据，不等 60s 定时器
         }
-        UpdateHomePage();  // 立即刷新首页数据，不等 60s 定时器
     }
 
     if (current_page_ == UiPage::kHome) {
         UpdateHomeStatus(safe_status);
+    } else if (current_page_ == UiPage::kMusic && music_chat_label_ != nullptr) {
+        std::string display_text = "小智: ";
+        display_text += safe_status[0] == '\0' ? Lang::Strings::STANDBY : safe_status;
+        lv_label_set_text(music_chat_label_, display_text.c_str());
     }
 
     Unlock();
@@ -1720,10 +2251,13 @@ void CustomLcdDisplay::SetEmotion(const char* emotion) {
 }
 
 void CustomLcdDisplay::SetChatMessage(const char* role, const char* content) {
-    (void)role;
-
     if (!Lock(30000)) {
         ESP_LOGE(TAG, "Failed to lock display in SetChatMessage");
+        return;
+    }
+
+    if (is_tool_trace_text(content)) {
+        Unlock();
         return;
     }
 
@@ -1731,25 +2265,17 @@ void CustomLcdDisplay::SetChatMessage(const char* role, const char* content) {
         UpdateWifiConfigMessage(content);
     } else if (current_page_ == UiPage::kActivation) {
         UpdateActivationCode(content);
-    } else if (current_page_ == UiPage::kMusic && content != nullptr && content[0] != '\0') {
-        // 更新音乐页歌曲信息，尝试解析 "歌手 - 歌名" 格式
-        const char* dash = strstr(content, " - ");
-        if (dash != nullptr) {
-            std::string artist(content, dash - content);
-            lv_label_set_text(music_artist_label_, artist.c_str());
-            lv_label_set_text(music_title_label_, dash + 3);
-        } else {
-            lv_label_set_text(music_artist_label_, "");
-            lv_label_set_text(music_title_label_, content);
+    } else if (role != nullptr && (strcmp(role, "music") == 0 || strcmp(role, "lyric") == 0)) {
+        UpdateMusicFromMessage(role, content);
+    } else if (content != nullptr && content[0] == '{') {
+        UiPage before_page = current_page_;
+        UpdateMusicFromMessage(role, content);
+        if (before_page == UiPage::kHome && current_page_ == UiPage::kHome && content[0] != '\0') {
+            UpdateHomeStatus(content);
         }
-    } else if (content != nullptr && strstr(content, " - ") != nullptr) {
-        // 检测到 "歌手 - 歌名" 格式，自动切到音乐页
-        SwitchPage(UiPage::kMusic);
-        UpdateTopBar(music_temp_label_, music_humidity_label_, music_datetime_label_, music_battery_label_);
-        const char* dash = strstr(content, " - ");
-        std::string artist(content, dash - content);
-        lv_label_set_text(music_artist_label_, artist.c_str());
-        lv_label_set_text(music_title_label_, dash + 3);
+    } else if (current_page_ == UiPage::kMusic && content != nullptr && content[0] != '\0') {
+        ShowMusicChatMessage(role, content);
+        UpdateMusicFromMessage(role, content);
     } else if (current_page_ == UiPage::kHome && content != nullptr && content[0] != '\0') {
         UpdateHomeStatus(content);
     }
