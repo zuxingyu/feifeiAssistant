@@ -157,6 +157,20 @@ public:
     bool HasWeatherConfig() const { return data_.has_weather_config; }
 
     /**
+     * @brief 获取单周或双周的整周课程表（周一到周五）
+     */
+    const DaySchedule* GetWeekSchedule(bool dual_week) const {
+        return dual_week ? dual_week_ : single_week_;
+    }
+
+    /**
+     * @brief 根据当前日期判断当前应显示双周还是单周
+     */
+    bool IsCurrentDualWeek() const {
+        return IsDualWeek(time(nullptr));
+    }
+
+    /**
      * @brief 计算指定日期属于单周还是双周
      *
      * 算法：计算从学期开始日期到指定日期的天数差 N，

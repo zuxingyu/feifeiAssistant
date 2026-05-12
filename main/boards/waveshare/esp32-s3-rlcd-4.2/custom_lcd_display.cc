@@ -166,6 +166,13 @@ CustomLcdDisplay::~CustomLcdDisplay() {
             Unlock();
         }
     }
+    if (schedule_chat_hide_timer_ != nullptr) {
+        if (Lock(30000)) {
+            lv_timer_del(schedule_chat_hide_timer_);
+            schedule_chat_hide_timer_ = nullptr;
+            Unlock();
+        }
+    }
     delete home_data_store_;
 }
 
@@ -1310,6 +1317,172 @@ void CustomLcdDisplay::CreateMusicPage(lv_obj_t* screen) {
     lv_obj_add_flag(music_page_, LV_OBJ_FLAG_HIDDEN);
 }
 
+void CustomLcdDisplay::CreateSchedulePage(lv_obj_t* screen) {
+    schedule_page_ = CreateFullScreenPage(screen);
+
+    schedule_top_bar_ = CreateTopBar(
+        schedule_page_,
+        &schedule_temp_label_,
+        &schedule_humidity_label_,
+        &schedule_datetime_label_,
+        nullptr,
+        &schedule_battery_label_,
+        true,
+        false,
+        true);
+
+    auto* main_area = lv_obj_create(schedule_page_);
+    lv_obj_set_size(main_area, LV_HOR_RES, LV_VER_RES - 28);
+    lv_obj_align(main_area, LV_ALIGN_TOP_LEFT, 0, 28);
+    lv_obj_set_style_radius(main_area, 0, 0);
+    lv_obj_set_style_bg_color(main_area, lv_color_white(), 0);
+    lv_obj_set_style_border_width(main_area, 0, 0);
+    lv_obj_set_style_pad_all(main_area, 0, 0);
+    lv_obj_set_scrollbar_mode(main_area, LV_SCROLLBAR_MODE_OFF);
+
+    auto* header = lv_obj_create(main_area);
+    lv_obj_set_size(header, LV_HOR_RES, 24);
+    lv_obj_align(header, LV_ALIGN_TOP_LEFT, 0, 0);
+    lv_obj_set_style_radius(header, 0, 0);
+    lv_obj_set_style_bg_color(header, lv_color_white(), 0);
+    lv_obj_set_style_border_width(header, 1, 0);
+    lv_obj_set_style_border_side(header, LV_BORDER_SIDE_BOTTOM, 0);
+    lv_obj_set_style_border_color(header, lv_color_black(), 0);
+    lv_obj_set_style_pad_left(header, 8, 0);
+    lv_obj_set_style_pad_right(header, 8, 0);
+    lv_obj_set_style_pad_top(header, 3, 0);
+    lv_obj_set_style_pad_bottom(header, 3, 0);
+    lv_obj_set_scrollbar_mode(header, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_set_flex_flow(header, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(header, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    auto* toggle_box = lv_obj_create(header);
+    lv_obj_set_size(toggle_box, 92, 18);
+    lv_obj_set_style_radius(toggle_box, 0, 0);
+    lv_obj_set_style_bg_color(toggle_box, lv_color_white(), 0);
+    lv_obj_set_style_border_width(toggle_box, 0, 0);
+    lv_obj_set_style_pad_all(toggle_box, 0, 0);
+    lv_obj_set_style_pad_column(toggle_box, 4, 0);
+    lv_obj_set_scrollbar_mode(toggle_box, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_set_flex_flow(toggle_box, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(toggle_box, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    auto create_week_label = [](lv_obj_t* parent, const char* text) {
+        auto* label = lv_label_create(parent);
+        lv_obj_set_size(label, 42, 16);
+        lv_obj_set_style_text_font(label, &alibaba_puhui_14, 0);
+        lv_obj_set_style_text_color(label, lv_color_black(), 0);
+        lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_set_style_border_width(label, 1, 0);
+        lv_obj_set_style_border_color(label, lv_color_black(), 0);
+        lv_obj_set_style_pad_top(label, 0, 0);
+        lv_label_set_long_mode(label, LV_LABEL_LONG_CLIP);
+        lv_label_set_text(label, text);
+        return label;
+    };
+    schedule_single_label_ = create_week_label(toggle_box, "单周");
+    schedule_dual_label_ = create_week_label(toggle_box, "双周");
+
+    schedule_range_label_ = lv_label_create(header);
+    lv_obj_set_width(schedule_range_label_, LV_HOR_RES - 120);
+    lv_obj_set_style_text_font(schedule_range_label_, &alibaba_puhui_14, 0);
+    lv_obj_set_style_text_color(schedule_range_label_, lv_color_black(), 0);
+    lv_obj_set_style_text_align(schedule_range_label_, LV_TEXT_ALIGN_RIGHT, 0);
+    lv_label_set_long_mode(schedule_range_label_, LV_LABEL_LONG_DOT);
+    lv_label_set_text(schedule_range_label_, "");
+
+    schedule_table_ = lv_obj_create(main_area);
+    lv_obj_set_size(schedule_table_, LV_HOR_RES, 224);
+    lv_obj_align(schedule_table_, LV_ALIGN_TOP_LEFT, 0, 24);
+    lv_obj_set_style_radius(schedule_table_, 0, 0);
+    lv_obj_set_style_bg_color(schedule_table_, lv_color_white(), 0);
+    lv_obj_set_style_border_width(schedule_table_, 1, 0);
+    lv_obj_set_style_border_side(schedule_table_, static_cast<lv_border_side_t>(LV_BORDER_SIDE_TOP | LV_BORDER_SIDE_LEFT | LV_BORDER_SIDE_BOTTOM), 0);
+    lv_obj_set_style_border_color(schedule_table_, lv_color_black(), 0);
+    lv_obj_set_style_pad_all(schedule_table_, 0, 0);
+    lv_obj_set_scrollbar_mode(schedule_table_, LV_SCROLLBAR_MODE_OFF);
+
+    auto create_cell = [](lv_obj_t* parent, int x, int y, int width, int height, const lv_font_t* font, lv_text_align_t align) {
+        auto* label = lv_label_create(parent);
+        lv_obj_set_size(label, width, height);
+        lv_obj_align(label, LV_ALIGN_TOP_LEFT, x, y);
+        lv_obj_set_style_text_font(label, font, 0);
+        lv_obj_set_style_text_color(label, lv_color_black(), 0);
+        lv_obj_set_style_text_align(label, align, 0);
+        lv_obj_set_style_border_width(label, 1, 0);
+        lv_obj_set_style_border_side(label,
+                                     static_cast<lv_border_side_t>(LV_BORDER_SIDE_RIGHT | LV_BORDER_SIDE_BOTTOM),
+                                     0);
+        lv_obj_set_style_border_color(label, lv_color_black(), 0);
+        lv_obj_set_style_pad_all(label, 0, 0);
+        lv_obj_set_style_pad_top(label, 2, 0);
+        lv_label_set_long_mode(label, LV_LABEL_LONG_DOT);
+        lv_label_set_text(label, "");
+        return label;
+    };
+
+    constexpr int kPeriodColWidth = 30;
+    constexpr int kDayColWidth = 74;
+    constexpr int kHeaderHeight = 20;
+    constexpr int kDefaultRowHeight = 22;
+
+    create_cell(schedule_table_, 0, 0, kPeriodColWidth, kHeaderHeight, &alibaba_puhui_14, LV_TEXT_ALIGN_CENTER);
+    static constexpr const char* kDayNames[5] = {"周一", "周二", "周三", "周四", "周五"};
+    for (int d = 0; d < 5; ++d) {
+        auto* day_label = create_cell(schedule_table_, kPeriodColWidth + d * kDayColWidth, 0,
+                                      kDayColWidth, kHeaderHeight, &alibaba_puhui_14, LV_TEXT_ALIGN_CENTER);
+        lv_label_set_text(day_label, kDayNames[d]);
+    }
+
+    for (int p = 0; p < 8; ++p) {
+        auto* row = lv_obj_create(schedule_table_);
+        lv_obj_set_size(row, LV_HOR_RES, kDefaultRowHeight);
+        lv_obj_align(row, LV_ALIGN_TOP_LEFT, 0, kHeaderHeight + p * kDefaultRowHeight);
+        lv_obj_set_style_radius(row, 0, 0);
+        lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_border_width(row, 0, 0);
+        lv_obj_set_style_pad_all(row, 0, 0);
+        lv_obj_set_scrollbar_mode(row, LV_SCROLLBAR_MODE_OFF);
+        schedule_course_rows_[p] = row;
+
+        char period_text[8];
+        snprintf(period_text, sizeof(period_text), "%s%d", p < 4 ? "上" : "下", (p % 4) + 1);
+        auto* period_label = create_cell(row, 0, 0, kPeriodColWidth, kDefaultRowHeight, &alibaba_puhui_14, LV_TEXT_ALIGN_CENTER);
+        lv_label_set_text(period_label, period_text);
+
+        for (int d = 0; d < 5; ++d) {
+            schedule_course_labels_[p][d] = create_cell(row, kPeriodColWidth + d * kDayColWidth, 0,
+                                                        kDayColWidth, kDefaultRowHeight, &alibaba_puhui_14, LV_TEXT_ALIGN_CENTER);
+        }
+    }
+
+    auto* bottom_strip = lv_obj_create(main_area);
+    lv_obj_set_size(bottom_strip, LV_HOR_RES, 24);
+    lv_obj_align(bottom_strip, LV_ALIGN_BOTTOM_LEFT, 0, 0);
+    lv_obj_set_style_radius(bottom_strip, 0, 0);
+    lv_obj_set_style_bg_color(bottom_strip, lv_color_white(), 0);
+    lv_obj_set_style_border_width(bottom_strip, 1, 0);
+    lv_obj_set_style_border_side(bottom_strip, LV_BORDER_SIDE_TOP, 0);
+    lv_obj_set_style_border_color(bottom_strip, lv_color_black(), 0);
+    lv_obj_set_style_pad_left(bottom_strip, 14, 0);
+    lv_obj_set_style_pad_right(bottom_strip, 14, 0);
+    lv_obj_set_style_pad_top(bottom_strip, 2, 0);
+    lv_obj_set_style_pad_bottom(bottom_strip, 2, 0);
+    lv_obj_set_scrollbar_mode(bottom_strip, LV_SCROLLBAR_MODE_OFF);
+
+    schedule_chat_label_ = lv_label_create(bottom_strip);
+    lv_obj_set_width(schedule_chat_label_, LV_HOR_RES - 28);
+    lv_obj_set_height(schedule_chat_label_, 18);
+    lv_obj_set_style_text_font(schedule_chat_label_, &alibaba_puhui_14, 0);
+    lv_obj_set_style_text_color(schedule_chat_label_, lv_color_black(), 0);
+    lv_obj_set_style_text_align(schedule_chat_label_, LV_TEXT_ALIGN_LEFT, 0);
+    lv_label_set_long_mode(schedule_chat_label_, LV_LABEL_LONG_DOT);
+    lv_label_set_text(schedule_chat_label_, "小智: 待命");
+
+    UpdateTopBar(schedule_temp_label_, schedule_humidity_label_, schedule_datetime_label_, schedule_battery_label_);
+    lv_obj_add_flag(schedule_page_, LV_OBJ_FLAG_HIDDEN);
+}
+
 void CustomLcdDisplay::UpdateMusicPage() {
     const std::string title = music_title_text_.empty() ? "未在播放" : music_title_text_;
     if (music_title_label_ != nullptr) {
@@ -1366,6 +1539,149 @@ void CustomLcdDisplay::UpdateMusicPage() {
         }
         lv_label_set_text(music_lyrics_label_, lyric.c_str());
     }
+}
+
+void CustomLcdDisplay::UpdateSchedulePage() {
+    if (home_data_store_ == nullptr) {
+        return;
+    }
+
+    home_data_store_->UpdateSchedule();
+    if (!schedule_week_manual_) {
+        schedule_show_dual_ = home_data_store_->IsCurrentDualWeek();
+    }
+
+    const HomeData& data = home_data_store_->GetHomeData();
+    const DaySchedule* week = home_data_store_->GetWeekSchedule(schedule_show_dual_);
+
+    auto apply_week_style = [](lv_obj_t* label, bool active) {
+        if (label == nullptr) {
+            return;
+        }
+        lv_obj_set_style_bg_opa(label, active ? LV_OPA_COVER : LV_OPA_TRANSP, 0);
+        lv_obj_set_style_bg_color(label, active ? lv_color_black() : lv_color_white(), 0);
+        lv_obj_set_style_text_color(label, active ? lv_color_white() : lv_color_black(), 0);
+    };
+    apply_week_style(schedule_single_label_, !schedule_show_dual_);
+    apply_week_style(schedule_dual_label_, schedule_show_dual_);
+
+    if (schedule_range_label_ != nullptr) {
+        time_t now = time(nullptr);
+        if (now >= 946684800) {
+            struct tm tm_now = {};
+            localtime_r(&now, &tm_now);
+            int days_from_monday = tm_now.tm_wday == 0 ? 6 : tm_now.tm_wday - 1;
+            time_t monday = now - days_from_monday * 86400;
+            time_t friday = monday + 4 * 86400;
+            struct tm tm_mon = {};
+            struct tm tm_fri = {};
+            localtime_r(&monday, &tm_mon);
+            localtime_r(&friday, &tm_fri);
+            char range[64];
+            snprintf(range, sizeof(range), "%02d月%02d日-%02d月%02d日",
+                     tm_mon.tm_mon + 1, tm_mon.tm_mday, tm_fri.tm_mon + 1, tm_fri.tm_mday);
+            lv_label_set_text(schedule_range_label_, range);
+        } else {
+            lv_label_set_text(schedule_range_label_, schedule_show_dual_ ? "双周课程" : "单周课程");
+        }
+    }
+
+    if (!data.has_schedule) {
+        if (schedule_table_ != nullptr) {
+            lv_obj_set_height(schedule_table_, 20 + 8 * 22);
+        }
+        for (int p = 0; p < 8; ++p) {
+            if (schedule_course_rows_[p] != nullptr) {
+                lv_obj_remove_flag(schedule_course_rows_[p], LV_OBJ_FLAG_HIDDEN);
+                lv_obj_set_height(schedule_course_rows_[p], 22);
+                lv_obj_align(schedule_course_rows_[p], LV_ALIGN_TOP_LEFT, 0, 20 + p * 22);
+            }
+            for (int d = 0; d < 5; ++d) {
+                if (schedule_course_labels_[p][d] != nullptr) {
+                    lv_label_set_text(schedule_course_labels_[p][d], p == 0 && d == 0 ? "未配置" : "");
+                }
+            }
+        }
+        return;
+    }
+
+    bool row_has_course[8] = {};
+    for (int d = 0; d < 5; ++d) {
+        for (const auto& course : week[d].courses) {
+            if (course.period >= 1 && course.period <= 8) {
+                row_has_course[course.period - 1] = true;
+            }
+        }
+    }
+
+    bool row_visible[8] = {};
+    int visible_count = 0;
+    for (int p = 0; p < 8; ++p) {
+        row_visible[p] = true;
+        if ((p == 3 || p == 7) && !row_has_course[p]) {
+            row_visible[p] = false;
+        }
+        if (row_visible[p]) {
+            visible_count++;
+        }
+    }
+
+    constexpr int kHeaderHeight = 20;
+    constexpr int kRowHeight = 22;
+    int next_y = kHeaderHeight;
+    for (int p = 0; p < 8; ++p) {
+        auto* row = schedule_course_rows_[p];
+        if (row == nullptr) {
+            continue;
+        }
+        if (!row_visible[p]) {
+            lv_obj_add_flag(row, LV_OBJ_FLAG_HIDDEN);
+            continue;
+        }
+        lv_obj_remove_flag(row, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_set_height(row, kRowHeight);
+        lv_obj_align(row, LV_ALIGN_TOP_LEFT, 0, next_y);
+        uint32_t child_count = lv_obj_get_child_count(row);
+        for (uint32_t i = 0; i < child_count; ++i) {
+            auto* child = lv_obj_get_child(row, i);
+            if (child != nullptr) {
+                lv_obj_set_height(child, kRowHeight);
+            }
+        }
+        next_y += kRowHeight;
+    }
+    if (schedule_table_ != nullptr) {
+        lv_obj_set_height(schedule_table_, kHeaderHeight + visible_count * kRowHeight);
+    }
+
+    for (int p = 0; p < 8; ++p) {
+        for (int d = 0; d < 5; ++d) {
+            const char* course_name = "";
+            for (const auto& course : week[d].courses) {
+                if (course.period == p + 1) {
+                    course_name = course.name.c_str();
+                    break;
+                }
+            }
+            if (schedule_course_labels_[p][d] != nullptr) {
+                lv_label_set_text(schedule_course_labels_[p][d], course_name);
+            }
+        }
+    }
+}
+
+void CustomLcdDisplay::ShowScheduleChatMessage(const char* role, const char* content) {
+    SetSharedChatMessage(role, content);
+}
+
+void CustomLcdDisplay::ScheduleChatHideTimerCb(lv_timer_t* timer) {
+    auto* self = timer != nullptr ? static_cast<CustomLcdDisplay*>(lv_timer_get_user_data(timer)) : nullptr;
+    if (self == nullptr) {
+        return;
+    }
+    self->SetSharedChatText("小智: 待命");
+    lv_timer_del(timer);
+    self->schedule_chat_hide_timer_ = nullptr;
 }
 
 std::string CustomLcdDisplay::BuildMusicLyricsWindow() const {
@@ -1531,25 +1847,13 @@ void CustomLcdDisplay::MusicChatHideTimerCb(lv_timer_t* timer) {
     if (self == nullptr) {
         return;
     }
-    if (self->music_chat_label_ != nullptr) {
-        lv_label_set_text(self->music_chat_label_, "小智: 待命");
-    }
+    self->SetSharedChatText("小智: 待命");
     lv_timer_del(timer);
     self->music_chat_hide_timer_ = nullptr;
 }
 
 void CustomLcdDisplay::ShowMusicChatMessage(const char* role, const char* content) {
-    if (music_chat_label_ == nullptr || content == nullptr || content[0] == '\0') {
-        return;
-    }
-    if (is_tool_trace_text(content)) {
-        return;
-    }
-    std::string prefix = "小智: ";
-    if (role != nullptr && strcmp(role, "user") == 0) {
-        prefix = "我: ";
-    }
-    lv_label_set_text(music_chat_label_, (prefix + content).c_str());
+    SetSharedChatMessage(role, content);
 
     if (music_chat_hide_timer_ != nullptr) {
         lv_timer_del(music_chat_hide_timer_);
@@ -1694,6 +1998,8 @@ void CustomLcdDisplay::SwitchPage(UiPage page) {
     set_visible(activation_page_, page == UiPage::kActivation);
     set_visible(home_page_, page == UiPage::kHome);
     set_visible(music_page_, page == UiPage::kMusic);
+    set_visible(schedule_page_, page == UiPage::kSchedule);
+    SyncSharedChatLabels();
 }
 
 void CustomLcdDisplay::CyclePage() {
@@ -1709,9 +2015,31 @@ void CustomLcdDisplay::CyclePage() {
             UpdateMusicPage();
         }
     } else if (current_page_ == UiPage::kMusic) {
+        SwitchPage(UiPage::kSchedule);
+        UpdateTopBar(schedule_temp_label_, schedule_humidity_label_, schedule_datetime_label_, schedule_battery_label_);
+        UpdateSchedulePage();
+    } else if (current_page_ == UiPage::kSchedule) {
         SwitchPage(UiPage::kHome);
     }
     Unlock();
+}
+
+bool CustomLcdDisplay::HandleKeyLongPress() {
+    if (!Lock(30000)) {
+        ESP_LOGW(TAG, "HandleKeyLongPress lock failed");
+        return false;
+    }
+
+    if (current_page_ == UiPage::kSchedule) {
+        schedule_show_dual_ = !schedule_show_dual_;
+        schedule_week_manual_ = true;
+        UpdateSchedulePage();
+        Unlock();
+        return true;
+    }
+
+    Unlock();
+    return false;
 }
 
 void CustomLcdDisplay::UpdateWifiConfigMessage(const char* message) {
@@ -1832,6 +2160,8 @@ void CustomLcdDisplay::TopBarTimerCb(lv_timer_t* timer) {
                        nullptr, self->home_top_battery_label_);
     self->UpdateTopBar(self->music_temp_label_, self->music_humidity_label_,
                        self->music_datetime_label_, self->music_battery_label_);
+    self->UpdateTopBar(self->schedule_temp_label_, self->schedule_humidity_label_,
+                       self->schedule_datetime_label_, self->schedule_battery_label_);
 }
 
 void CustomLcdDisplay::UpdateTopBar(lv_obj_t* temp_label, lv_obj_t* humidity_label, lv_obj_t* datetime_label, lv_obj_t* battery_label) {
@@ -1939,8 +2269,46 @@ void CustomLcdDisplay::UpdateHomeStatus(const char* status) {
     last_status_text_ = status != nullptr ? status : "";
     std::string display_text = "小智: ";
     display_text += last_status_text_.empty() ? Lang::Strings::STANDBY : last_status_text_;
+    SetSharedChatText(display_text);
+}
+
+void CustomLcdDisplay::SetSharedStatus(const char* status) {
+    const char* safe_status = status != nullptr ? status : "";
+    std::string display_text = "小智: ";
+    display_text += safe_status[0] == '\0' ? Lang::Strings::STANDBY : safe_status;
+    SetSharedChatText(display_text);
+}
+
+void CustomLcdDisplay::SetSharedChatMessage(const char* role, const char* content) {
+    if (content == nullptr || content[0] == '\0' || is_tool_trace_text(content)) {
+        return;
+    }
+
+    std::string display_text;
+    if (role != nullptr && strcmp(role, "user") == 0) {
+        display_text = "我: ";
+    } else {
+        display_text = "小智: ";
+    }
+    display_text += content;
+    SetSharedChatText(display_text);
+}
+
+void CustomLcdDisplay::SetSharedChatText(const std::string& text) {
+    shared_chat_text_ = text.empty() ? "小智: 待命" : text;
+    SyncSharedChatLabels();
+}
+
+void CustomLcdDisplay::SyncSharedChatLabels() {
+    const char* text = shared_chat_text_.empty() ? "小智: 待命" : shared_chat_text_.c_str();
     if (home_bottom_status_label_ != nullptr) {
-        lv_label_set_text(home_bottom_status_label_, display_text.c_str());
+        lv_label_set_text(home_bottom_status_label_, text);
+    }
+    if (music_chat_label_ != nullptr) {
+        lv_label_set_text(music_chat_label_, text);
+    }
+    if (schedule_chat_label_ != nullptr) {
+        lv_label_set_text(schedule_chat_label_, text);
     }
 }
 
@@ -2218,6 +2586,7 @@ void CustomLcdDisplay::SetupUI() {
     CreateActivationPage(screen);
     CreateHomePage(screen);
     CreateMusicPage(screen);
+    CreateSchedulePage(screen);
     SwitchPage(UiPage::kBoot);
 
     if (top_bar_timer_ == nullptr) {
@@ -2254,13 +2623,7 @@ void CustomLcdDisplay::SetStatus(const char* status) {
         }
     }
 
-    if (current_page_ == UiPage::kHome) {
-        UpdateHomeStatus(safe_status);
-    } else if (current_page_ == UiPage::kMusic && music_chat_label_ != nullptr) {
-        std::string display_text = "小智: ";
-        display_text += safe_status[0] == '\0' ? Lang::Strings::STANDBY : safe_status;
-        lv_label_set_text(music_chat_label_, display_text.c_str());
-    }
+    SetSharedStatus(safe_status);
 
     Unlock();
 }
@@ -2292,16 +2655,14 @@ void CustomLcdDisplay::SetChatMessage(const char* role, const char* content) {
     } else if (role != nullptr && (strcmp(role, "music") == 0 || strcmp(role, "lyric") == 0)) {
         UpdateMusicFromMessage(role, content);
     } else if (content != nullptr && content[0] == '{') {
-        UiPage before_page = current_page_;
         UpdateMusicFromMessage(role, content);
-        if (before_page == UiPage::kHome && current_page_ == UiPage::kHome && content[0] != '\0') {
-            UpdateHomeStatus(content);
-        }
     } else if (current_page_ == UiPage::kMusic && content != nullptr && content[0] != '\0') {
         ShowMusicChatMessage(role, content);
         UpdateMusicFromMessage(role, content);
+    } else if (current_page_ == UiPage::kSchedule && content != nullptr && content[0] != '\0') {
+        ShowScheduleChatMessage(role, content);
     } else if (current_page_ == UiPage::kHome && content != nullptr && content[0] != '\0') {
-        UpdateHomeStatus(content);
+        SetSharedChatMessage(role, content);
     }
 
     Unlock();
@@ -2314,6 +2675,7 @@ void CustomLcdDisplay::ClearChatMessages() {
     }
 
     last_message_text_.clear();
+    SetSharedChatText("小智: 待命");
     UpdateWifiConfigPage();
 
     Unlock();

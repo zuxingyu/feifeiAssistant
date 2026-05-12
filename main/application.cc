@@ -59,6 +59,7 @@ bool Application::SetDeviceState(DeviceState state) {
 }
 
 void Application::PauseMusicForAssistant() {
+    audio_service_.SetAssistantAudioActive(true);
     if (music_paused_for_assistant_) {
         return;
     }
@@ -73,6 +74,7 @@ void Application::PauseMusicForAssistant() {
 
 void Application::ResumeMusicAfterAssistant() {
     if (!music_paused_for_assistant_) {
+        audio_service_.SetAssistantAudioActive(false);
         return;
     }
     music_paused_for_assistant_ = false;
@@ -82,10 +84,12 @@ void Application::ResumeMusicAfterAssistant() {
             display->SetChatMessage("music", "{\"type\":\"music\",\"state\":\"播放中\"}");
         }
     }
+    audio_service_.SetAssistantAudioActive(false);
 }
 
 void Application::EnterMusicPlaybackMode() {
     music_paused_for_assistant_ = false;
+    audio_service_.SetAssistantAudioActive(false);
     aborted_ = true;
     if (protocol_ && protocol_->IsAudioChannelOpened()) {
         protocol_->CloseAudioChannel(false);
@@ -915,6 +919,7 @@ void Application::HandleStateChangedEvent() {
             audio_service_.EnableWakeWordDetection(true);
             break;
         case kDeviceStateConnecting:
+            PauseMusicForAssistant();
             display->SetStatus(Lang::Strings::CONNECTING);
             display->SetEmotion("neutral");
             display->SetChatMessage("system", "");

@@ -37,6 +37,7 @@ private:
         kActivation,
         kHome,
         kMusic,
+        kSchedule,
     };
 
     esp_lcd_panel_io_handle_t io_handle = NULL;
@@ -72,6 +73,7 @@ private:
     std::string last_status_text_;
     std::string last_message_text_;
     std::string last_activation_code_;
+    std::string shared_chat_text_ = "小智: 待命";
 
     lv_obj_t* boot_page_ = nullptr;
     lv_obj_t* boot_logo_label_ = nullptr;
@@ -156,6 +158,24 @@ private:
     int music_position_ms_ = 0;
     int music_duration_ms_ = 0;
 
+    // 课程表页面
+    lv_obj_t* schedule_page_ = nullptr;
+    lv_obj_t* schedule_top_bar_ = nullptr;
+    lv_obj_t* schedule_temp_label_ = nullptr;
+    lv_obj_t* schedule_humidity_label_ = nullptr;
+    lv_obj_t* schedule_datetime_label_ = nullptr;
+    lv_obj_t* schedule_battery_label_ = nullptr;
+    lv_obj_t* schedule_single_label_ = nullptr;
+    lv_obj_t* schedule_dual_label_ = nullptr;
+    lv_obj_t* schedule_range_label_ = nullptr;
+    lv_obj_t* schedule_table_ = nullptr;
+    lv_obj_t* schedule_course_rows_[8] = {};
+    lv_obj_t* schedule_course_labels_[8][5] = {};
+    lv_obj_t* schedule_chat_label_ = nullptr;
+    lv_timer_t* schedule_chat_hide_timer_ = nullptr;
+    bool schedule_show_dual_ = false;
+    bool schedule_week_manual_ = false;
+
     lv_obj_t* activation_page_ = nullptr;
     lv_obj_t* activation_top_bar_ = nullptr;
     lv_obj_t* activation_temp_label_ = nullptr;
@@ -186,12 +206,17 @@ private:
     void CreateActivationPage(lv_obj_t* screen);
     void CreateHomePage(lv_obj_t* screen);
     void CreateMusicPage(lv_obj_t* screen);
+    void CreateSchedulePage(lv_obj_t* screen);
     void SwitchPage(UiPage page);
     void UpdateWifiConfigMessage(const char* message);
     void UpdateTopBar(lv_obj_t* temp_label, lv_obj_t* humidity_label, lv_obj_t* datetime_label, lv_obj_t* battery_label);
     void UpdateWifiConfigPage();
     void UpdateActivationCode(const char* code);
     void UpdateHomeStatus(const char* status);
+    void SetSharedStatus(const char* status);
+    void SetSharedChatMessage(const char* role, const char* content);
+    void SetSharedChatText(const std::string& text);
+    void SyncSharedChatLabels();
     void UpdateHomePage();
     static void HomeRefreshTimerCb(lv_timer_t* timer);
     void UpdateMusicPage();
@@ -201,10 +226,14 @@ private:
     void StartMusicMockPlayback();
     static void MusicChatHideTimerCb(lv_timer_t* timer);
     static void MusicMockTimerCb(lv_timer_t* timer);
+    void UpdateSchedulePage();
+    void ShowScheduleChatMessage(const char* role, const char* content);
+    static void ScheduleChatHideTimerCb(lv_timer_t* timer);
 
 public:
     void SetupUI() override;
-    void CyclePage();  // 页面循环：Home↔Music
+    void CyclePage();  // 页面循环：Home→Music→Schedule→Home
+    bool HandleKeyLongPress();
     void SetStatus(const char* status) override;
     void ShowNotification(const char* notification, int duration_ms = 3000) override;
     void SetEmotion(const char* emotion) override;

@@ -136,6 +136,7 @@ public:
     bool PauseMusicPlayback();
     bool ResumeMusicPlayback();
     void StopMusicPlayback();
+    void SetAssistantAudioActive(bool active);
     bool IsMusicPlaying() const { return music_playing_; }
     bool IsMusicPaused() const { return music_paused_; }
     bool ReadAudioData(std::vector<int16_t>& data, int sample_rate, int samples);
@@ -197,6 +198,7 @@ private:
     std::atomic<bool> music_stop_requested_{false};
     std::atomic<bool> music_playing_{false};
     std::atomic<bool> music_paused_{false};
+    std::atomic<bool> assistant_audio_active_{false};
 
     void AudioInputTask();
     void AudioOutputTask();

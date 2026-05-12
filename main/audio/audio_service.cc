@@ -138,6 +138,14 @@ void ConvertDecodedPcmToMono16(const uint8_t* pcm_bytes, size_t byte_count, int 
     }
 }
 
+void* MusicMalloc(size_t size) {
+    void* ptr = heap_caps_malloc(size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (ptr == nullptr) {
+        ptr = heap_caps_malloc(size, MALLOC_CAP_8BIT);
+    }
+    return ptr;
+}
+
 }  // namespace
 
 AudioService::AudioService() {
@@ -405,7 +413,7 @@ void AudioService::AudioOutputTask() {
         audio_queue_cv_.notify_all();
         lock.unlock();
 
-        if (music_playing_) {
+        if (music_playing_ && !music_paused_ && !assistant_audio_active_) {
             continue;
         }
 
@@ -417,7 +425,7 @@ void AudioService::AudioOutputTask() {
 
         {
             std::lock_guard<std::mutex> output_lock(output_mutex_);
-            if (!music_playing_) {
+            if (!music_playing_ || music_paused_ || assistant_audio_active_) {
                 codec_->OutputData(task->pcm);
             }
         }
@@ -452,7 +460,7 @@ void AudioService::OpusCodecTask() {
 
         /* Decode the audio from decode queue */
         if (!audio_decode_queue_.empty() && audio_playback_queue_.size() < MAX_PLAYBACK_TASKS_IN_QUEUE) {
-            if (music_playing_) {
+            if (music_playing_ && !music_paused_ && !assistant_audio_active_) {
                 audio_decode_queue_.clear();
                 audio_queue_cv_.notify_all();
                 continue;
@@ -624,7 +632,7 @@ void AudioService::PushTaskToEncodeQueue(AudioTaskType type, std::vector<int16_t
 
 bool AudioService::PushPacketToDecodeQueue(std::unique_ptr<AudioStreamPacket> packet, bool wait) {
     std::unique_lock<std::mutex> lock(audio_queue_mutex_);
-    if (music_playing_) {
+    if (music_playing_ && !music_paused_ && !assistant_audio_active_) {
         return false;
     }
     if (audio_decode_queue_.size() >= MAX_DECODE_PACKETS_IN_QUEUE) {
@@ -764,16 +772,22 @@ void AudioService::PlayMusicUrl(const std::string& url) {
     music_stop_requested_ = false;
     music_paused_ = false;
     music_playing_ = true;
+    ESP_LOGI(TAG, "Create music playback task free_internal=%u free_psram=%u",
+             static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)),
+             static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_SPIRAM)));
+    constexpr uint32_t kMusicTaskStackSize = 12 * 1024;
     if (xTaskCreate([](void* arg) {
             auto* audio_service = static_cast<AudioService*>(arg);
             audio_service->MusicPlaybackTask();
             audio_service->music_playback_task_handle_ = nullptr;
             vTaskDelete(NULL);
-        }, "music_playback", 2048 * 10, this, 5, &music_playback_task_handle_) != pdPASS) {
+        }, "music_playback", kMusicTaskStackSize, this, 5, &music_playback_task_handle_) != pdPASS) {
         music_playback_task_handle_ = nullptr;
         music_playing_ = false;
         music_paused_ = false;
-        ESP_LOGE(TAG, "Failed to create music playback task");
+        ESP_LOGE(TAG, "Failed to create music playback task free_internal=%u free_psram=%u",
+                 static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)),
+                 static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_SPIRAM)));
     }
 }
 
@@ -812,10 +826,16 @@ bool AudioService::ResumeMusicPlayback() {
     return true;
 }
 
+void AudioService::SetAssistantAudioActive(bool active) {
+    assistant_audio_active_ = active;
+    ESP_LOGI(TAG, "Assistant audio %s", active ? "active" : "inactive");
+}
+
 void AudioService::StopMusicPlayback() {
     if (music_playback_task_handle_ == nullptr) {
         music_playing_ = false;
         music_paused_ = false;
+        assistant_audio_active_ = false;
         return;
     }
 
@@ -828,6 +848,7 @@ void AudioService::StopMusicPlayback() {
     }
     music_playing_ = false;
     music_paused_ = false;
+    assistant_audio_active_ = false;
 }
 
 void AudioService::MusicPlaybackTask() {
@@ -836,6 +857,7 @@ void AudioService::MusicPlaybackTask() {
         ~MusicPlaybackGuard() {
             service->music_playing_ = false;
             service->music_paused_ = false;
+            service->assistant_audio_active_ = false;
             service->music_stop_requested_ = false;
             Board::GetInstance().SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
         }
@@ -850,6 +872,7 @@ void AudioService::MusicPlaybackTask() {
         esp_timer_start_periodic(audio_power_timer_, AUDIO_POWER_CHECK_INTERVAL_MS * 1000);
         codec_->EnableOutput(true);
     }
+    last_output_time_ = std::chrono::steady_clock::now();
 
     auto network = Board::GetInstance().GetNetwork();
     if (network == nullptr) {
@@ -912,10 +935,12 @@ void AudioService::MusicPlaybackTask() {
 
     constexpr int kReadSize = 4096;
     int out_size = 8192;
-    auto* in_buf = static_cast<uint8_t*>(heap_caps_malloc(kReadSize, MALLOC_CAP_8BIT));
-    auto* out_buf = static_cast<uint8_t*>(heap_caps_malloc(out_size, MALLOC_CAP_8BIT));
+    auto* in_buf = static_cast<uint8_t*>(MusicMalloc(kReadSize));
+    auto* out_buf = static_cast<uint8_t*>(MusicMalloc(out_size));
     if (in_buf == nullptr || out_buf == nullptr) {
-        ESP_LOGE(TAG, "No memory for music decoder buffers");
+        ESP_LOGE(TAG, "No memory for music decoder buffers free_internal=%u free_psram=%u",
+                 static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)),
+                 static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_SPIRAM)));
         if (in_buf) heap_caps_free(in_buf);
         if (out_buf) heap_caps_free(out_buf);
         esp_audio_simple_dec_close(decoder);
@@ -927,11 +952,32 @@ void AudioService::MusicPlaybackTask() {
     esp_ae_rate_cvt_handle_t music_resampler = nullptr;
     int current_sample_rate = 0;
     bool info_ready = false;
+    bool first_pcm_logged = false;
     std::vector<int16_t> mono_pcm;
     std::vector<int16_t> output_pcm;
 
+    auto write_music_pcm = [this, &first_pcm_logged](std::vector<int16_t>& pcm) {
+        if (pcm.empty()) {
+            return;
+        }
+        std::lock_guard<std::mutex> output_lock(output_mutex_);
+        if (!codec_->output_enabled()) {
+            ESP_LOGW(TAG, "Music output was disabled before PCM write, re-enable it");
+            esp_timer_stop(audio_power_timer_);
+            esp_timer_start_periodic(audio_power_timer_, AUDIO_POWER_CHECK_INTERVAL_MS * 1000);
+            codec_->EnableOutput(true);
+        }
+        if (!first_pcm_logged) {
+            ESP_LOGI(TAG, "Music first PCM write samples=%u volume=%d output_enabled=%d",
+                     static_cast<unsigned>(pcm.size()), codec_->output_volume(), codec_->output_enabled());
+            first_pcm_logged = true;
+        }
+        codec_->OutputData(pcm);
+        last_output_time_ = std::chrono::steady_clock::now();
+    };
+
     while (!music_stop_requested_) {
-        while (music_paused_ && !music_stop_requested_) {
+        while ((music_paused_ || assistant_audio_active_) && !music_stop_requested_) {
             vTaskDelay(pdMS_TO_TICKS(50));
         }
         if (music_stop_requested_) {
@@ -956,7 +1002,7 @@ void AudioService::MusicPlaybackTask() {
         };
 
         while (raw.len > 0 && !music_stop_requested_) {
-            while (music_paused_ && !music_stop_requested_) {
+            while ((music_paused_ || assistant_audio_active_) && !music_stop_requested_) {
                 vTaskDelay(pdMS_TO_TICKS(50));
             }
             if (music_stop_requested_) {
@@ -971,7 +1017,11 @@ void AudioService::MusicPlaybackTask() {
             };
             ret = esp_audio_simple_dec_process(decoder, &raw, &out_frame);
             if (ret == ESP_AUDIO_ERR_BUFF_NOT_ENOUGH) {
-                auto* new_out = static_cast<uint8_t*>(heap_caps_realloc(out_buf, out_frame.needed_size, MALLOC_CAP_8BIT));
+                auto* new_out = static_cast<uint8_t*>(heap_caps_realloc(out_buf, out_frame.needed_size,
+                                                                        MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+                if (new_out == nullptr) {
+                    new_out = static_cast<uint8_t*>(heap_caps_realloc(out_buf, out_frame.needed_size, MALLOC_CAP_8BIT));
+                }
                 if (new_out == nullptr) {
                     ESP_LOGE(TAG, "No memory to grow music output buffer to %lu", out_frame.needed_size);
                     music_stop_requested_ = true;
@@ -1025,17 +1075,10 @@ void AudioService::MusicPlaybackTask() {
                                                 mono_pcm.size(), reinterpret_cast<esp_ae_sample_t>(output_pcm.data()),
                                                 &actual_output);
                         output_pcm.resize(actual_output);
-                        {
-                            std::lock_guard<std::mutex> output_lock(output_mutex_);
-                            codec_->OutputData(output_pcm);
-                        }
+                        write_music_pcm(output_pcm);
                     } else {
-                        {
-                            std::lock_guard<std::mutex> output_lock(output_mutex_);
-                            codec_->OutputData(mono_pcm);
-                        }
+                        write_music_pcm(mono_pcm);
                     }
-                    last_output_time_ = std::chrono::steady_clock::now();
                 }
             }
 

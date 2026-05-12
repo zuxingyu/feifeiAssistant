@@ -687,9 +687,13 @@ private:
             }
         });
 
-        // PWR 按键接在电源管理芯片上，ESP32 固件读不到；用 KEY 长按作为音乐暂停/继续。
+        // PWR 按键接在电源管理芯片上，ESP32 固件读不到；KEY 长按按当前页面分流。
         user_button_.OnLongPress([this]() {
-            ESP_LOGI(TAG, "KEY long pressed: toggle music playback");
+            ESP_LOGI(TAG, "KEY long pressed");
+            auto* display = static_cast<CustomLcdDisplay*>(GetDisplay());
+            if (display != nullptr && display->HandleKeyLongPress()) {
+                return;
+            }
             ToggleMusicPlaybackFromButton();
         });
 
@@ -767,8 +771,10 @@ private:
                 cJSON_free(text);
                 cJSON_Delete(root);
                 if (!audio_url.empty()) {
-                    Application::GetInstance().AbortSpeaking(kAbortReasonNone);
-                    Application::GetInstance().GetAudioService().PlayMusicUrl(audio_url);
+                    auto& app = Application::GetInstance();
+                    app.AbortSpeaking(kAbortReasonNone);
+                    app.EnterMusicPlaybackMode();
+                    app.GetAudioService().PlayMusicUrl(audio_url);
                 }
                 return true;
             });
