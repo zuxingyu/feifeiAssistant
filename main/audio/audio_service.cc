@@ -788,6 +788,30 @@ bool AudioService::ToggleMusicPause() {
     return !paused;
 }
 
+bool AudioService::PauseMusicPlayback() {
+    if (!music_playing_) {
+        return false;
+    }
+    if (music_paused_) {
+        return false;
+    }
+    music_paused_ = true;
+    ESP_LOGI(TAG, "Music playback paused");
+    return true;
+}
+
+bool AudioService::ResumeMusicPlayback() {
+    if (!music_playing_) {
+        return false;
+    }
+    if (!music_paused_) {
+        return false;
+    }
+    music_paused_ = false;
+    ESP_LOGI(TAG, "Music playback resumed");
+    return true;
+}
+
 void AudioService::StopMusicPlayback() {
     if (music_playback_task_handle_ == nullptr) {
         music_playing_ = false;

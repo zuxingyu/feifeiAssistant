@@ -142,6 +142,7 @@ private:
     lv_obj_t* music_progress_fill_ = nullptr;
     lv_obj_t* music_time_cur_label_ = nullptr;
     lv_obj_t* music_time_total_label_ = nullptr;
+    lv_obj_t* music_play_icon_label_ = nullptr;
     lv_obj_t* music_lyrics_label_ = nullptr;
     lv_obj_t* music_chat_label_ = nullptr;
     lv_timer_t* music_chat_hide_timer_ = nullptr;

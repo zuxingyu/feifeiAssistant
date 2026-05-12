@@ -2,6 +2,7 @@
 #include <driver/i2c_master.h>
 #include <driver/spi_common.h>
 #include <driver/temperature_sensor.h>
+#include <esp_heap_caps.h>
 #include <esp_log.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
@@ -71,6 +72,17 @@ private:
         return escaped.str();
     }
 
+    static std::string MusicResolverBaseUrl() {
+        std::string endpoint = MUSIC_RESOLVER_ENDPOINT;
+        auto prepare_pos = endpoint.find("/prepare");
+        if (prepare_pos != std::string::npos) {
+            return endpoint.substr(0, prepare_pos);
+        }
+        auto scheme_pos = endpoint.find("://");
+        auto path_pos = endpoint.find('/', scheme_pos == std::string::npos ? 0 : scheme_pos + 3);
+        return path_pos == std::string::npos ? endpoint : endpoint.substr(0, path_pos);
+    }
+
     static const char* JsonString(cJSON* root, const char* key, const char* fallback = "") {
         auto* item = cJSON_GetObjectItem(root, key);
         return cJSON_IsString(item) && item->valuestring != nullptr ? item->valuestring : fallback;
@@ -88,10 +100,44 @@ private:
                 display->SetChatMessage(role.c_str(), text.c_str());
             }
             if (!audio_url.empty()) {
-                Application::GetInstance().AbortSpeaking(kAbortReasonNone);
-                Application::GetInstance().GetAudioService().PlayMusicUrl(audio_url);
+                auto& app = Application::GetInstance();
+                app.AbortSpeaking(kAbortReasonNone);
+                app.EnterMusicPlaybackMode();
+                app.GetAudioService().PlayMusicUrl(audio_url);
             }
         });
+    }
+
+    void FetchAndApplyMusicLyric(const std::string& song_mid) {
+        if (song_mid.empty()) {
+            return;
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(1200));
+        auto network = Board::GetInstance().GetNetwork();
+        if (network == nullptr) {
+            ESP_LOGW(TAG, "Skip lyric fetch: network unavailable");
+            return;
+        }
+
+        std::string url = MusicResolverBaseUrl() + "/lyric?song_mid=" + UrlEncode(song_mid) + "&format=text";
+        ESP_LOGI(TAG, "Fetch music lyric song_mid=%s", song_mid.c_str());
+        auto http = network->CreateHttp(2);
+        http->SetTimeout(12000);
+        http->SetHeader("Accept", "text/plain");
+        if (!http->Open("GET", url)) {
+            ESP_LOGW(TAG, "Failed to open lyric resolver, err=%d", http->GetLastError());
+            return;
+        }
+
+        int status = http->GetStatusCode();
+        std::string lyric = http->ReadAll();
+        http->Close();
+        ESP_LOGI(TAG, "Music lyric status=%d body_len=%u", status, static_cast<unsigned>(lyric.size()));
+        if (status < 200 || status >= 300 || lyric.empty()) {
+            return;
+        }
+        ScheduleMusicMessage("lyric", lyric);
     }
 
     static bool BuildMusicTrackText(cJSON* source, std::string& text, std::string& audio_url) {
@@ -152,13 +198,29 @@ private:
         cJSON_Delete(root);
 
         if (audio_url[0] != '\0') {
-            Application::GetInstance().AbortSpeaking(kAbortReasonNone);
-            Application::GetInstance().GetAudioService().PlayMusicUrl(audio_url);
+            auto& app = Application::GetInstance();
+            app.AbortSpeaking(kAbortReasonNone);
+            app.EnterMusicPlaybackMode();
+            app.GetAudioService().PlayMusicUrl(audio_url);
         }
         return true;
     }
 
     bool ResolveAndPlaySong(const std::string& keyword, std::string& message) {
+        struct MusicResolvePowerGuard {
+            bool keep_performance = false;
+            ~MusicResolvePowerGuard() {
+                if (!keep_performance) {
+                    Board::GetInstance().SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
+                }
+            }
+        } power_guard;
+
+        Board::GetInstance().SetPowerSaveLevel(PowerSaveLevel::PERFORMANCE);
+        ESP_LOGI(TAG, "Music resolve heap before: free=%u min=%u",
+                 static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)),
+                 static_cast<unsigned>(heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL)));
+
         cJSON* preparing = cJSON_CreateObject();
         cJSON_AddStringToObject(preparing, "type", "music");
         cJSON_AddStringToObject(preparing, "title", keyword.c_str());
@@ -178,7 +240,7 @@ private:
             return false;
         }
 
-        std::string url = std::string(MUSIC_RESOLVER_ENDPOINT) + "?keyword=" + UrlEncode(keyword) + "&index=0&compact=1";
+        std::string url = std::string(MUSIC_RESOLVER_ENDPOINT) + "?keyword=" + UrlEncode(keyword) + "&index=0&compact=1&lyric=0";
         ESP_LOGI(TAG, "Resolve music keyword=%s", keyword.c_str());
         auto http = network->CreateHttp(2);
         http->SetTimeout(20000);
@@ -217,13 +279,23 @@ private:
         }
         std::string track_text;
         std::string audio_url;
+        std::string song_mid = JsonString(track, "song_mid");
         bool ok = BuildMusicTrackText(track, track_text, audio_url);
         const char* state = JsonString(track, "state", "");
         if (ok) {
+            if (!audio_url.empty()) {
+                power_guard.keep_performance = true;
+            }
             ScheduleMusicMessage("music", track_text, audio_url);
         }
         message = !audio_url.empty() ? "音乐已开始播放" : (state[0] ? state : "暂无可播放音源");
+        ESP_LOGI(TAG, "Music resolve heap after: free=%u min=%u",
+                 static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)),
+                 static_cast<unsigned>(heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL)));
         cJSON_Delete(root);
+        if (ok && !audio_url.empty() && !song_mid.empty()) {
+            FetchAndApplyMusicLyric(song_mid);
+        }
         return ok && !audio_url.empty();
     }
 
@@ -233,12 +305,17 @@ private:
             return false;
         }
 
+        // 切歌前先释放旧的音乐 HTTP/解码任务，避免播放中再次点歌时内部 RAM 不足。
+        Application::GetInstance().GetAudioService().StopMusicPlayback();
+
         auto* request = new MusicResolveRequest{this, keyword};
         auto task = [](void* arg) {
             auto* request = static_cast<MusicResolveRequest*>(arg);
             ESP_LOGI(TAG, "Music resolver task start: %s", request->keyword.c_str());
             std::string message;
             request->board->ResolveAndPlaySong(request->keyword, message);
+            ESP_LOGI(TAG, "Music resolver task stack high watermark=%u",
+                     static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)));
             ESP_LOGI(TAG, "Music resolver finished: %s", message.c_str());
             request->board->music_resolve_task_handle_ = nullptr;
             delete request;
@@ -554,11 +631,42 @@ private:
         return env_cache_ok_;
     }
 
+    void UpdateMusicPlaybackState(bool playing) {
+        cJSON* root = cJSON_CreateObject();
+        cJSON_AddStringToObject(root, "type", "music");
+        cJSON_AddStringToObject(root, "state", playing ? "播放中" : "已暂停");
+
+        char* text = cJSON_PrintUnformatted(root);
+        auto* display = GetDisplay();
+        if (display != nullptr && text != nullptr) {
+            display->SetChatMessage("music", text);
+        }
+        if (display != nullptr) {
+            display->SetChatMessage("assistant", playing ? "音乐继续播放" : "音乐已暂停");
+        }
+        if (text != nullptr) {
+            cJSON_free(text);
+        }
+        cJSON_Delete(root);
+    }
+
+    bool ToggleMusicPlaybackFromButton() {
+        auto& audio_service = Application::GetInstance().GetAudioService();
+        if (!audio_service.IsMusicPlaying()) {
+            auto* display = GetDisplay();
+            if (display != nullptr) {
+                display->SetChatMessage("assistant", "当前没有正在播放的音乐");
+            }
+            return false;
+        }
+
+        bool playing = audio_service.ToggleMusicPause();
+        UpdateMusicPlaybackState(playing);
+        return playing;
+    }
+
     void InitializeButtons() { 
-        // 单击按键：
-        // 1. 开机阶段进入配网
-        // 2. 其他阶段切换对话状态
-        // BOOT 按钮（GPIO0）- 唤醒小智
+        // BOOT 按钮（GPIO0）- 唤醒/关闭小智对话。
         boot_button_.OnClick([this]() {
             auto& app = Application::GetInstance();
             if (app.GetDeviceState() == kDeviceStateStarting) {
@@ -568,7 +676,7 @@ private:
             app.ToggleChatState();
         });
 
-        // KEY 按钮 — 页面循环 Home↔Music（调试：先打印日志确认检测到按键）
+        // KEY 按钮 - 页面循环 Home↔Music。
         user_button_.OnClick([this]() {
             ESP_LOGI(TAG, "KEY button clicked!");
             auto& app = Application::GetInstance();
@@ -577,6 +685,12 @@ private:
             if (display != nullptr) {
                 display->CyclePage();
             }
+        });
+
+        // PWR 按键接在电源管理芯片上，ESP32 固件读不到；用 KEY 长按作为音乐暂停/继续。
+        user_button_.OnLongPress([this]() {
+            ESP_LOGI(TAG, "KEY long pressed: toggle music playback");
+            ToggleMusicPlaybackFromButton();
         });
 
 #if CONFIG_USE_DEVICE_AEC
@@ -702,18 +816,11 @@ private:
             PropertyList(),
             [this](const PropertyList& properties) -> ReturnValue {
                 auto& audio_service = Application::GetInstance().GetAudioService();
-                bool playing = audio_service.ToggleMusicPause();
-                cJSON* root = cJSON_CreateObject();
-                cJSON_AddStringToObject(root, "type", "music");
-                cJSON_AddStringToObject(root, "state", playing ? "播放中" : "已暂停");
-
-                char* text = cJSON_PrintUnformatted(root);
-                auto* display = GetDisplay();
-                if (display != nullptr) {
-                    display->SetChatMessage("music", text);
+                if (!audio_service.IsMusicPlaying()) {
+                    return "当前没有正在播放的音乐";
                 }
-                cJSON_free(text);
-                cJSON_Delete(root);
+                bool playing = audio_service.ToggleMusicPause();
+                UpdateMusicPlaybackState(playing);
                 return playing ? "音乐继续播放" : "音乐已暂停";
             });
     }

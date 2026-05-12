@@ -58,6 +58,43 @@ bool Application::SetDeviceState(DeviceState state) {
     return state_machine_.TransitionTo(state);
 }
 
+void Application::PauseMusicForAssistant() {
+    if (music_paused_for_assistant_) {
+        return;
+    }
+    if (audio_service_.PauseMusicPlayback()) {
+        music_paused_for_assistant_ = true;
+        auto display = Board::GetInstance().GetDisplay();
+        if (display != nullptr) {
+            display->SetChatMessage("music", "{\"type\":\"music\",\"state\":\"已暂停\"}");
+        }
+    }
+}
+
+void Application::ResumeMusicAfterAssistant() {
+    if (!music_paused_for_assistant_) {
+        return;
+    }
+    music_paused_for_assistant_ = false;
+    if (audio_service_.ResumeMusicPlayback()) {
+        auto display = Board::GetInstance().GetDisplay();
+        if (display != nullptr) {
+            display->SetChatMessage("music", "{\"type\":\"music\",\"state\":\"播放中\"}");
+        }
+    }
+}
+
+void Application::EnterMusicPlaybackMode() {
+    music_paused_for_assistant_ = false;
+    aborted_ = true;
+    if (protocol_ && protocol_->IsAudioChannelOpened()) {
+        protocol_->CloseAudioChannel(false);
+    }
+    if (GetDeviceState() != kDeviceStateIdle) {
+        SetDeviceState(kDeviceStateIdle);
+    }
+}
+
 void Application::Initialize() {
     auto& board = Board::GetInstance();
     SetDeviceState(kDeviceStateStarting);
@@ -720,6 +757,8 @@ void Application::ContinueOpenAudioChannel(ListeningMode mode) {
 
     if (!protocol_->IsAudioChannelOpened()) {
         if (!protocol_->OpenAudioChannel()) {
+            ESP_LOGW(TAG, "Open audio channel failed, return to idle");
+            SetDeviceState(kDeviceStateIdle);
             return;
         }
     }
@@ -830,6 +869,8 @@ void Application::ContinueWakeWordInvoke(const std::string& wake_word) {
     if (!protocol_->IsAudioChannelOpened()) {
         if (!protocol_->OpenAudioChannel()) {
             audio_service_.EnableWakeWordDetection(true);
+            ESP_LOGW(TAG, "Open audio channel for wake word failed, return to idle");
+            SetDeviceState(kDeviceStateIdle);
             return;
         }
     }
@@ -866,6 +907,7 @@ void Application::HandleStateChangedEvent() {
     switch (new_state) {
         case kDeviceStateUnknown:
         case kDeviceStateIdle:
+            ResumeMusicAfterAssistant();
             display->SetStatus(Lang::Strings::STANDBY);
             display->ClearChatMessages();  // Clear messages first
             display->SetEmotion("neutral"); // Then set emotion (wechat mode checks child count)
@@ -878,6 +920,7 @@ void Application::HandleStateChangedEvent() {
             display->SetChatMessage("system", "");
             break;
         case kDeviceStateListening:
+            PauseMusicForAssistant();
             display->SetStatus(Lang::Strings::LISTENING);
             display->SetEmotion("neutral");
 
@@ -909,6 +952,7 @@ void Application::HandleStateChangedEvent() {
             }
             break;
         case kDeviceStateSpeaking:
+            PauseMusicForAssistant();
             display->SetStatus(Lang::Strings::SPEAKING);
 
             if (listening_mode_ != kListeningModeRealtime) {

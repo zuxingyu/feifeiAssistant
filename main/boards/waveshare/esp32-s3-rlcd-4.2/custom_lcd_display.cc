@@ -1,12 +1,14 @@
 #include <vector>
 #include <cstring>
 #include <ctime>
+#include <inttypes.h>
 #include <algorithm>
 #include <sstream>
 #include <freertos/FreeRTOS.h>
 #include <esp_lcd_panel_io.h>
 #include <esp_log.h>
 #include <esp_err.h>
+#include <esp_heap_caps.h>
 #include <cJSON.h>
 #include "custom_lcd_display.h"
 #include "lcd_display.h"
@@ -55,17 +57,18 @@ cs_(spiconfig.cs),
 rst_(spiconfig.rst), 
 width_(width), 
 height_(height)
-{
-	ESP_LOGI(TAG, "Initialize SPI");
-	esp_err_t        ret;
-    spi_bus_config_t buscfg   = {};
-    int              transfer = width_ * height_;
+	{
+		ESP_LOGI(TAG, "Initialize SPI");
+		esp_err_t        ret;
+	    spi_bus_config_t buscfg   = {};
+	    int              transfer = width_ * height_;
+	    int              rlcd_transfer = transfer >> 3;
     buscfg.miso_io_num                   = -1;
     buscfg.mosi_io_num                   = mosi_;
     buscfg.sclk_io_num                   = scl_;
     buscfg.quadwp_io_num                 = -1;
     buscfg.quadhd_io_num                 = -1;
-    buscfg.max_transfer_sz               = transfer;
+	    buscfg.max_transfer_sz               = rlcd_transfer;
     ret                                  = spi_bus_initialize(spi_host, &buscfg, SPI_DMA_CH_AUTO);
     ESP_ERROR_CHECK(ret);
     esp_lcd_panel_io_spi_config_t io_config = {};
@@ -75,7 +78,7 @@ height_(height)
     io_config.lcd_cmd_bits = 8;
     io_config.lcd_param_bits = 8;
     io_config.spi_mode = 0;
-    io_config.trans_queue_depth = 7;
+	    io_config.trans_queue_depth = 1;
     ESP_ERROR_CHECK(esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)spi_host, &io_config, &io_handle));
     gpio_config_t gpio_conf = {};
     gpio_conf.intr_type     = GPIO_INTR_DISABLE;
@@ -86,10 +89,14 @@ height_(height)
     ESP_ERROR_CHECK_WITHOUT_ABORT(gpio_config(&gpio_conf));
     Set_ResetIOLevel(1);
 
-    // RLCD 采用 1bit 黑白像素格式，因此每 8 个像素占 1 字节。
-    DisplayLen                = transfer >> 3;
-    DispBuffer                = (uint8_t *) heap_caps_malloc(DisplayLen, MALLOC_CAP_SPIRAM);
-    assert(DispBuffer);
+	    // RLCD 采用 1bit 黑白像素格式，因此每 8 个像素占 1 字节。
+	    DisplayLen                = rlcd_transfer;
+	    DispBuffer                = (uint8_t *) heap_caps_malloc(DisplayLen, MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
+	    if (DispBuffer == nullptr) {
+	        ESP_LOGW(TAG, "Failed to allocate RLCD DMA buffer in internal RAM, fallback to PSRAM");
+	        DispBuffer = (uint8_t *) heap_caps_malloc(DisplayLen, MALLOC_CAP_SPIRAM);
+	    }
+	    assert(DispBuffer);
 	PixelIndexLUT = (uint16_t (*)[300])heap_caps_malloc(transfer * sizeof(uint16_t), MALLOC_CAP_SPIRAM);
 	PixelBitLUT   = (uint8_t (*)[300])heap_caps_malloc(transfer * sizeof(uint8_t), MALLOC_CAP_SPIRAM);
     assert(PixelIndexLUT);
@@ -218,7 +225,19 @@ void CustomLcdDisplay::RLCD_SendData(uint8_t Data) {
 }
 
 void CustomLcdDisplay::RLCD_Sendbuffera(uint8_t *Data, int len) {
-    ESP_ERROR_CHECK(esp_lcd_panel_io_tx_color(io_handle, -1, Data, len));
+    esp_err_t err = esp_lcd_panel_io_tx_color(io_handle, -1, Data, len);
+    if (err != ESP_OK) {
+        static uint32_t skipped_frames = 0;
+        skipped_frames++;
+        if (skipped_frames == 1 || skipped_frames % 20 == 0) {
+            ESP_LOGW(TAG, "Skip RLCD frame: tx_color failed err=%s skipped=%" PRIu32
+                          " free_dma=%u free_internal=%u",
+                     esp_err_to_name(err),
+                     skipped_frames,
+                     static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_DMA)),
+                     static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)));
+        }
+    }
 }
 
 void CustomLcdDisplay::RLCD_Reset(void) {
@@ -1223,11 +1242,11 @@ void CustomLcdDisplay::CreateMusicPage(lv_obj_t* screen) {
     lv_obj_set_style_pad_right(btn_prev, 12, 0);
     lv_label_set_text(btn_prev, FONT_AWESOME_BACKWARD_STEP);
 
-    lv_obj_t* btn_play = lv_label_create(controls);
-    lv_obj_set_style_text_font(btn_play, &font_awesome_16_4, 0);
-    lv_obj_set_style_text_color(btn_play, lv_color_black(), 0);
-    lv_obj_set_style_pad_hor(btn_play, 8, 0);
-    lv_label_set_text(btn_play, FONT_AWESOME_PLAY);
+    music_play_icon_label_ = lv_label_create(controls);
+    lv_obj_set_style_text_font(music_play_icon_label_, &font_awesome_16_4, 0);
+    lv_obj_set_style_text_color(music_play_icon_label_, lv_color_black(), 0);
+    lv_obj_set_style_pad_hor(music_play_icon_label_, 8, 0);
+    lv_label_set_text(music_play_icon_label_, FONT_AWESOME_PLAY);
 
     lv_obj_t* btn_next = lv_label_create(controls);
     lv_obj_set_style_text_font(btn_next, &font_awesome_16_4, 0);
@@ -1312,6 +1331,11 @@ void CustomLcdDisplay::UpdateMusicPage() {
     }
     if (music_artist_label_ != nullptr) {
         lv_label_set_text(music_artist_label_, artist_line.c_str());
+    }
+    if (music_play_icon_label_ != nullptr) {
+        const bool has_track = !music_title_text_.empty() && music_title_text_ != "未在播放";
+        const bool paused = music_playback_state_ == "已暂停" || music_playback_state_ == "暂停中";
+        lv_label_set_text(music_play_icon_label_, (has_track && !paused) ? FONT_AWESOME_PAUSE : FONT_AWESOME_PLAY);
     }
 
     int duration = std::max(music_duration_ms_, 0);

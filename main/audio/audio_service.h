@@ -133,6 +133,8 @@ public:
     void PlaySound(const std::string_view& sound);
     void PlayMusicUrl(const std::string& url);
     bool ToggleMusicPause();
+    bool PauseMusicPlayback();
+    bool ResumeMusicPlayback();
     void StopMusicPlayback();
     bool IsMusicPlaying() const { return music_playing_; }
     bool IsMusicPaused() const { return music_paused_; }
