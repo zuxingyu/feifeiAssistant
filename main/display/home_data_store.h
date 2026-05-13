@@ -77,6 +77,9 @@ struct WeatherDay {
     std::string high_temp;    ///< 最高温度，如 "22"
     std::string low_temp;     ///< 最低温度，如 "14"
     std::string description;  ///< 天气描述，如 "晴"、"多云"、"小雨"
+    std::string humidity;     ///< 湿度，如 "65"
+    std::string wind_scale;   ///< 风力等级，如 "3"
+    std::string precip;       ///< 降水概率，0-100；接口不返回时为空
 };
 
 /**
@@ -89,6 +92,8 @@ struct HomeData {
     DaySchedule  today_schedule;      ///< 今日课程（周末时 courses 为空）
     DaySchedule  tomorrow_schedule;   ///< 明日课程（周末时 courses 为空）
     WeatherDay   weather[3];          ///< 今日、明日、后天天气预报
+    WeatherDay   weather_detail[4];   ///< 昨日、今日、明日、后天天气详情
+    std::string  weather_city;        ///< 天气城市名称
     time_t       last_weather_update; ///< 上次天气更新的 Unix 时间戳 (0 = 从未更新)
     bool         has_schedule;        ///< 是否已成功加载课程表配置
     bool         has_weather_config;  ///< 是否已配置天气 API

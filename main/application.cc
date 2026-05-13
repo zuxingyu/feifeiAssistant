@@ -11,6 +11,7 @@
 #include "settings.h"
 
 #include <cstring>
+#include <cstdio>
 #include <esp_log.h>
 #include <cJSON.h>
 #include <driver/gpio.h>
@@ -58,6 +59,10 @@ bool Application::SetDeviceState(DeviceState state) {
     return state_machine_.TransitionTo(state);
 }
 
+void Application::SuppressMusicAutoResumeAfterAssistant() {
+    music_auto_resume_after_assistant_ = false;
+}
+
 void Application::PauseMusicForAssistant() {
     if (music_paused_for_assistant_) {
         audio_service_.SetAssistantAudioActive(true);
@@ -65,6 +70,7 @@ void Application::PauseMusicForAssistant() {
     }
     if (audio_service_.SuspendMusicForAssistant()) {
         music_paused_for_assistant_ = true;
+        music_auto_resume_after_assistant_ = true;
         auto display = Board::GetInstance().GetDisplay();
         if (display != nullptr) {
             display->SetChatMessage("music", "{\"type\":\"music\",\"state\":\"已暂停\"}");
@@ -79,11 +85,15 @@ void Application::ResumeMusicAfterAssistant() {
         audio_service_.SetAssistantAudioActive(false);
         return;
     }
+    const bool should_resume = music_auto_resume_after_assistant_ && !audio_service_.IsMusicPaused();
     music_paused_for_assistant_ = false;
-    if (audio_service_.ResumeSuspendedMusicForAssistant()) {
+    music_auto_resume_after_assistant_ = true;
+    if (should_resume && audio_service_.ResumeSuspendedMusicForAssistant()) {
         auto display = Board::GetInstance().GetDisplay();
         if (display != nullptr) {
-            display->SetChatMessage("music", "{\"type\":\"music\",\"state\":\"播放中\"}");
+            display->SetChatMessage("music", audio_service_.IsMusicPaused()
+                ? "{\"type\":\"music\",\"state\":\"已暂停\"}"
+                : "{\"type\":\"music\",\"state\":\"播放中\"}");
         }
     } else {
         audio_service_.SetAssistantAudioActive(false);
@@ -92,6 +102,7 @@ void Application::ResumeMusicAfterAssistant() {
 
 void Application::EnterMusicPlaybackMode() {
     music_paused_for_assistant_ = false;
+    music_auto_resume_after_assistant_ = true;
     audio_service_.SetAssistantAudioActive(false);
     aborted_ = true;
     if (protocol_ && protocol_->IsAudioChannelOpened()) {
@@ -100,6 +111,89 @@ void Application::EnterMusicPlaybackMode() {
     if (GetDeviceState() != kDeviceStateIdle) {
         SetDeviceState(kDeviceStateIdle);
     }
+}
+
+bool Application::TryHandleLocalMusicCommand(const std::string& text) {
+    auto contains = [&text](const char* needle) {
+        return text.find(needle) != std::string::npos;
+    };
+    auto exact_or_short_contains = [&text, &contains](const char* needle) {
+        return text == needle || (text.size() <= 24 && contains(needle));
+    };
+
+    enum class Action {
+        kNone,
+        kPause,
+        kResume,
+        kStop,
+    };
+
+    Action action = Action::kNone;
+    if (exact_or_short_contains("退出") || exact_or_short_contains("关闭") || contains("关闭音乐") || contains("退出音乐") ||
+        contains("停止播放") || contains("关闭播放") || contains("不听了")) {
+        action = Action::kStop;
+    } else if (exact_or_short_contains("暂停音乐") || exact_or_short_contains("暂停播放") ||
+               text == "暂停" || text == "暂停一下") {
+        action = Action::kPause;
+    } else if (exact_or_short_contains("继续播放") || exact_or_short_contains("恢复播放") ||
+               exact_or_short_contains("继续") || exact_or_short_contains("恢复") ||
+               text == "播放" || text == "播放。") {
+        action = Action::kResume;
+    }
+
+    if (action == Action::kNone || !audio_service_.HasMusicSession()) {
+        return false;
+    }
+
+    SuppressMusicAutoResumeAfterAssistant();
+    Schedule([this, action]() {
+        auto display = Board::GetInstance().GetDisplay();
+        auto set_music_state = [display](const char* state) {
+            if (display == nullptr) {
+                return;
+            }
+            char payload[80];
+            snprintf(payload, sizeof(payload), "{\"type\":\"music\",\"state\":\"%s\"}", state);
+            display->SetChatMessage("music", payload);
+        };
+
+        if (action == Action::kStop) {
+            audio_service_.CancelMusicPlayback();
+            music_paused_for_assistant_ = false;
+            music_auto_resume_after_assistant_ = false;
+            if (display != nullptr) {
+                display->SetChatMessage("music",
+                    "{\"type\":\"music\",\"title\":\"未在播放\",\"artist\":\"\",\"album\":\"\","
+                    "\"lyric\":\"暂无歌词\",\"audio_url\":\"\",\"state\":\"\","
+                    "\"position_ms\":0,\"duration_ms\":0}");
+                display->SetChatMessage("assistant", "音乐已关闭");
+            }
+            return;
+        }
+
+        if (action == Action::kPause) {
+            audio_service_.PauseMusicPlayback();
+            music_auto_resume_after_assistant_ = false;
+            set_music_state("已暂停");
+            if (display != nullptr) {
+                display->SetChatMessage("assistant", "音乐已暂停");
+            }
+            return;
+        }
+
+        if (action == Action::kResume) {
+            music_paused_for_assistant_ = false;
+            music_auto_resume_after_assistant_ = true;
+            if (audio_service_.ResumeMusicPlayback()) {
+                set_music_state("播放中");
+                if (display != nullptr) {
+                    display->SetChatMessage("assistant", "音乐继续播放");
+                }
+                EnterMusicPlaybackMode();
+            }
+        }
+    });
+    return true;
 }
 
 void Application::Initialize() {
@@ -597,6 +691,7 @@ void Application::InitializeProtocol() {
             auto text = cJSON_GetObjectItem(root, "text");
             if (cJSON_IsString(text)) {
                 ESP_LOGI(TAG, ">> %s", text->valuestring);
+                TryHandleLocalMusicCommand(text->valuestring);
                 Schedule([display, message = std::string(text->valuestring)]() {
                     display->SetChatMessage("user", message.c_str());
                 });

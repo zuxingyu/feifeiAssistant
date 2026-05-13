@@ -113,6 +113,7 @@ public:
     void PlaySound(const std::string_view& sound);
     AudioService& GetAudioService() { return audio_service_; }
     void EnterMusicPlaybackMode();
+    void SuppressMusicAutoResumeAfterAssistant();
     
     /**
      * Reset protocol resources (thread-safe)
@@ -142,6 +143,7 @@ private:
     bool assets_version_checked_ = false;
     bool play_popup_on_listening_ = false;  // Flag to play popup sound after state changes to listening
     bool music_paused_for_assistant_ = false;
+    bool music_auto_resume_after_assistant_ = true;
     int clock_ticks_ = 0;
     TaskHandle_t activation_task_handle_ = nullptr;
 
@@ -170,6 +172,7 @@ private:
     ListeningMode GetDefaultListeningMode() const;
     void PauseMusicForAssistant();
     void ResumeMusicAfterAssistant();
+    bool TryHandleLocalMusicCommand(const std::string& text);
     
     // State change handler called by state machine
     void OnStateChanged(DeviceState old_state, DeviceState new_state);

@@ -18,6 +18,7 @@
 #include "codecs/box_audio_codec.h"
 #include "wifi_station.h"
 #include "mcp_server.h"
+#include "settings.h"
 #include "lvgl.h"
 #include "custom_lcd_display.h"
 #define TAG "waveshare_rlcd_4_2"
@@ -72,8 +73,26 @@ private:
         return escaped.str();
     }
 
+    static std::string NormalizeMusicResolverEndpoint(const std::string& endpoint) {
+        if (endpoint.empty()) {
+            return MUSIC_RESOLVER_ENDPOINT;
+        }
+        if (endpoint.find("/prepare") != std::string::npos) {
+            return endpoint;
+        }
+        if (!endpoint.empty() && endpoint.back() == '/') {
+            return endpoint + "prepare";
+        }
+        return endpoint + "/prepare";
+    }
+
+    static std::string MusicResolverEndpoint() {
+        Settings settings("setup", false);
+        return NormalizeMusicResolverEndpoint(settings.GetString("music_resolver", MUSIC_RESOLVER_ENDPOINT));
+    }
+
     static std::string MusicResolverBaseUrl() {
-        std::string endpoint = MUSIC_RESOLVER_ENDPOINT;
+        std::string endpoint = MusicResolverEndpoint();
         auto prepare_pos = endpoint.find("/prepare");
         if (prepare_pos != std::string::npos) {
             return endpoint.substr(0, prepare_pos);
@@ -154,7 +173,8 @@ private:
         cJSON_AddStringToObject(root, "title", title);
         cJSON_AddStringToObject(root, "artist", JsonString(source, "artist"));
         cJSON_AddStringToObject(root, "album", JsonString(source, "album"));
-        cJSON_AddStringToObject(root, "lyric", JsonString(source, "lyric"));
+        const char* lyric = JsonString(source, "lyric");
+        cJSON_AddStringToObject(root, "lyric", lyric[0] ? lyric : "暂无歌词");
         cJSON_AddStringToObject(root, "audio_url", audio_url.c_str());
         cJSON_AddStringToObject(root, "state", JsonString(source, "state", audio_url.empty() ? "暂无可播放音源" : "播放中"));
         cJSON_AddNumberToObject(root, "position_ms", JsonInt(source, "position_ms"));
@@ -240,8 +260,9 @@ private:
             return false;
         }
 
-        std::string url = std::string(MUSIC_RESOLVER_ENDPOINT) + "?keyword=" + UrlEncode(keyword) + "&index=0&compact=1&lyric=0";
-        ESP_LOGI(TAG, "Resolve music keyword=%s", keyword.c_str());
+        std::string resolver_endpoint = MusicResolverEndpoint();
+        std::string url = resolver_endpoint + "?keyword=" + UrlEncode(keyword) + "&index=0&compact=1&lyric=1";
+        ESP_LOGI(TAG, "Resolve music keyword=%s endpoint=%s", keyword.c_str(), resolver_endpoint.c_str());
         auto http = network->CreateHttp(2);
         http->SetTimeout(20000);
         http->SetHeader("Accept", "application/json");
@@ -279,7 +300,6 @@ private:
         }
         std::string track_text;
         std::string audio_url;
-        std::string song_mid = JsonString(track, "song_mid");
         bool ok = BuildMusicTrackText(track, track_text, audio_url);
         const char* state = JsonString(track, "state", "");
         if (ok) {
@@ -293,9 +313,8 @@ private:
                  static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)),
                  static_cast<unsigned>(heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL)));
         cJSON_Delete(root);
-        if (ok && !audio_url.empty() && !song_mid.empty()) {
-            FetchAndApplyMusicLyric(song_mid);
-        }
+        // 不在音乐流播放期间再发起歌词 HTTP 请求。ESP32-S3 内部 SRAM 较紧，
+        // 并发的歌词请求会把音乐流挤到超时，表现为进度条继续走但声音消失。
         return ok && !audio_url.empty();
     }
 
@@ -650,6 +669,71 @@ private:
         cJSON_Delete(root);
     }
 
+    void UpdateMusicStoppedState() {
+        cJSON* root = cJSON_CreateObject();
+        cJSON_AddStringToObject(root, "type", "music");
+        cJSON_AddStringToObject(root, "title", "未在播放");
+        cJSON_AddStringToObject(root, "artist", "");
+        cJSON_AddStringToObject(root, "album", "");
+        cJSON_AddStringToObject(root, "lyric", "暂无歌词");
+        cJSON_AddStringToObject(root, "audio_url", "");
+        cJSON_AddStringToObject(root, "state", "");
+        cJSON_AddNumberToObject(root, "position_ms", 0);
+        cJSON_AddNumberToObject(root, "duration_ms", 0);
+
+        char* text = cJSON_PrintUnformatted(root);
+        auto* display = GetDisplay();
+        if (display != nullptr && text != nullptr) {
+            display->SetChatMessage("music", text);
+            display->SetChatMessage("assistant", "音乐已关闭");
+        }
+        if (text != nullptr) {
+            cJSON_free(text);
+        }
+        cJSON_Delete(root);
+    }
+
+    const char* PauseMusicFromVoice() {
+        auto& app = Application::GetInstance();
+        auto& audio_service = Application::GetInstance().GetAudioService();
+        if (!audio_service.HasMusicSession()) {
+            return "当前没有正在播放的音乐";
+        }
+        app.SuppressMusicAutoResumeAfterAssistant();
+        if (audio_service.IsMusicPaused()) {
+            UpdateMusicPlaybackState(false);
+            return "音乐已经暂停";
+        }
+        audio_service.PauseMusicPlayback();
+        UpdateMusicPlaybackState(false);
+        return "音乐已暂停";
+    }
+
+    const char* ResumeMusicFromVoice() {
+        auto& audio_service = Application::GetInstance().GetAudioService();
+        if (!audio_service.HasMusicSession()) {
+            return "当前没有可继续播放的音乐";
+        }
+        if (!audio_service.IsMusicPaused() && !audio_service.IsMusicSuspendedForAssistant()) {
+            UpdateMusicPlaybackState(true);
+            return "音乐正在播放";
+        }
+        audio_service.ResumeMusicPlayback();
+        Application::GetInstance().EnterMusicPlaybackMode();
+        UpdateMusicPlaybackState(true);
+        return "音乐继续播放";
+    }
+
+    const char* StopMusicFromVoice() {
+        auto& app = Application::GetInstance();
+        auto& audio_service = Application::GetInstance().GetAudioService();
+        const bool had_music = audio_service.HasMusicSession() || audio_service.IsMusicPaused();
+        app.SuppressMusicAutoResumeAfterAssistant();
+        audio_service.CancelMusicPlayback();
+        UpdateMusicStoppedState();
+        return had_music ? "音乐已关闭" : "当前没有正在播放的音乐";
+    }
+
     bool ToggleMusicPlaybackFromButton() {
         auto& audio_service = Application::GetInstance().GetAudioService();
         if (!audio_service.IsMusicPlaying()) {
@@ -719,6 +803,8 @@ private:
 
         mcp_server.AddTool("self.music.play_song",
             "Play a song on the device. Use this as the primary and only tool when the user asks to play music. "
+            "Use this only when the user names a song, artist, album, or other music keyword. "
+            "If the user only says play/resume/continue without a song name, use self.music.resume_playback instead. "
             "The device will resolve song metadata, lyric and a playable audio URL from the configured music resolver, "
             "then update the music page and start playback by itself.",
             PropertyList({
@@ -822,12 +908,40 @@ private:
             PropertyList(),
             [this](const PropertyList& properties) -> ReturnValue {
                 auto& audio_service = Application::GetInstance().GetAudioService();
-                if (!audio_service.IsMusicPlaying()) {
+                if (!audio_service.HasMusicSession()) {
                     return "当前没有正在播放的音乐";
                 }
-                bool playing = audio_service.ToggleMusicPause();
+                bool playing = audio_service.IsMusicSuspendedForAssistant()
+                    ? audio_service.ResumeMusicPlayback()
+                    : audio_service.ToggleMusicPause();
+                if (playing) {
+                    Application::GetInstance().EnterMusicPlaybackMode();
+                }
                 UpdateMusicPlaybackState(playing);
                 return playing ? "音乐继续播放" : "音乐已暂停";
+            });
+
+        mcp_server.AddTool("self.music.pause_playback",
+            "Pause current music playback. Use this when the user says 暂停, 暂停播放, or pause music.",
+            PropertyList(),
+            [this](const PropertyList&) -> ReturnValue {
+                return PauseMusicFromVoice();
+            });
+
+        mcp_server.AddTool("self.music.resume_playback",
+            "Resume current paused music playback. Use this when the user says 播放, 继续播放, 恢复播放, or resume, "
+            "and does not name a new song.",
+            PropertyList(),
+            [this](const PropertyList&) -> ReturnValue {
+                return ResumeMusicFromVoice();
+            });
+
+        mcp_server.AddTool("self.music.stop_playback",
+            "Stop and exit current music source playback. Use this when the user says 退出, 关闭, 停止播放, 不听了, "
+            "关闭音乐, or exit music.",
+            PropertyList(),
+            [this](const PropertyList&) -> ReturnValue {
+                return StopMusicFromVoice();
             });
     }
 

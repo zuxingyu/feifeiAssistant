@@ -136,11 +136,14 @@ public:
     bool PauseMusicPlayback();
     bool ResumeMusicPlayback();
     void StopMusicPlayback();
+    void CancelMusicPlayback();
     void SetAssistantAudioActive(bool active);
     bool SuspendMusicForAssistant();
     bool ResumeSuspendedMusicForAssistant();
     bool IsMusicPlaying() const { return music_playing_; }
     bool IsMusicPaused() const { return music_paused_; }
+    bool IsMusicSuspendedForAssistant() const { return music_suspended_for_assistant_; }
+    bool HasMusicSession() const { return music_playing_ || music_suspended_for_assistant_; }
     bool ReadAudioData(std::vector<int16_t>& data, int sample_rate, int samples);
     void ResetDecoder();
     void SetModelsList(srmodel_list_t* models_list);

@@ -26,6 +26,7 @@
 #include <freertos/task.h>
 
 static const char* TAG = "HomeDataStore";
+static const char* WEATHER_LAST_TODAY_KEY = "w_last";
 
 /**
  * @brief URL 编码（百分号编码）
@@ -48,6 +49,72 @@ static void UrlEncode(const char* src, char* dst, size_t dst_size) {
         }
     }
     dst[di] = '\0';
+}
+
+static std::string GetDateOffsetString(int offset_days) {
+    time_t now = time(nullptr);
+    if (now <= 0) {
+        return "";
+    }
+    now += offset_days * 86400;
+    struct tm time_info = {};
+    if (localtime_r(&now, &time_info) == nullptr) {
+        return "";
+    }
+    char buf[16];
+    strftime(buf, sizeof(buf), "%Y-%m-%d", &time_info);
+    return buf;
+}
+
+static std::string SerializeWeatherDay(const WeatherDay& day) {
+    cJSON* root = cJSON_CreateObject();
+    if (root == nullptr) {
+        return "";
+    }
+    cJSON_AddStringToObject(root, "date", day.date.c_str());
+    cJSON_AddStringToObject(root, "high", day.high_temp.c_str());
+    cJSON_AddStringToObject(root, "low", day.low_temp.c_str());
+    cJSON_AddStringToObject(root, "text", day.description.c_str());
+    cJSON_AddStringToObject(root, "humidity", day.humidity.c_str());
+    cJSON_AddStringToObject(root, "wind_scale", day.wind_scale.c_str());
+    cJSON_AddStringToObject(root, "precip", day.precip.c_str());
+    char* json = cJSON_PrintUnformatted(root);
+    std::string result = json != nullptr ? json : "";
+    if (json != nullptr) {
+        cJSON_free(json);
+    }
+    cJSON_Delete(root);
+    return result;
+}
+
+static bool ParseWeatherDayJson(const std::string& json, WeatherDay& out) {
+    if (json.empty()) {
+        return false;
+    }
+    cJSON* root = cJSON_Parse(json.c_str());
+    if (root == nullptr) {
+        return false;
+    }
+    auto get_str = [root](const char* key) -> const char* {
+        cJSON* item = cJSON_GetObjectItem(root, key);
+        return cJSON_IsString(item) ? item->valuestring : nullptr;
+    };
+    const char* date = get_str("date");
+    const char* high = get_str("high");
+    const char* low = get_str("low");
+    const char* text = get_str("text");
+    const char* humidity = get_str("humidity");
+    const char* wind_scale = get_str("wind_scale");
+    const char* precip = get_str("precip");
+    if (date) out.date = date;
+    if (high) out.high_temp = high;
+    if (low) out.low_temp = low;
+    if (text) out.description = text;
+    if (humidity) out.humidity = humidity;
+    if (wind_scale) out.wind_scale = wind_scale;
+    if (precip) out.precip = precip;
+    cJSON_Delete(root);
+    return !out.date.empty();
 }
 
 // ============================================================================
@@ -88,6 +155,14 @@ bool HomeDataStore::LoadFromNvs() {
 
     data_.has_schedule = sched_ok;
     data_.has_weather_config = weather_ok;
+
+    WeatherDay cached_yesterday;
+    Settings settings("setup");
+    if (ParseWeatherDayJson(settings.GetString(WEATHER_LAST_TODAY_KEY), cached_yesterday) &&
+        cached_yesterday.date == GetDateOffsetString(-1)) {
+        data_.weather_detail[0] = cached_yesterday;
+        ESP_LOGI(TAG, "已从本地缓存恢复昨日天气: %s", cached_yesterday.date.c_str());
+    }
 
     ESP_LOGI(TAG, "NVS 加载完成: 课程表=%s, 天气配置=%s",
              sched_ok ? "成功" : "失败",
@@ -479,7 +554,7 @@ bool HomeDataStore::FetchWeatherFromApi() {
     UrlEncode(weather_city_.c_str(), encoded_city, sizeof(encoded_city));
     int url_len = snprintf(url, sizeof(url),
              "http://api.seniverse.com/v3/weather/daily.json"
-             "?key=%s&location=%s&language=zh-Hans&unit=c&start=0&days=3",
+             "?key=%s&location=%s&language=zh-Hans&unit=c&start=-1&days=4",
              weather_key_.c_str(), encoded_city);
 
     ESP_LOGI(TAG, "天气请求 URL 长度: %d", url_len);
@@ -569,7 +644,7 @@ bool HomeDataStore::ParseWeatherResponse(const char* json_str) {
     //   "results": [{
     //     "location": { "name": "深圳" },
     //     "daily": [
-    //       { "date": "2025-01-04", "text_day": "晴", "high": "22", "low": "14" },
+    //       { "date": "2025-01-04", "text_day": "晴", "high": "22", "low": "14", "humidity": "65" },
     //       ...
     //     ]
     //   }]
@@ -587,6 +662,14 @@ bool HomeDataStore::ParseWeatherResponse(const char* json_str) {
         return false;
     }
 
+    cJSON* location = cJSON_GetObjectItem(first_result, "location");
+    cJSON* location_name = location != nullptr ? cJSON_GetObjectItem(location, "name") : nullptr;
+    if (location_name && cJSON_IsString(location_name)) {
+        data_.weather_city = location_name->valuestring;
+    } else if (data_.weather_city.empty()) {
+        data_.weather_city = weather_city_;
+    }
+
     cJSON* daily = cJSON_GetObjectItem(first_result, "daily");
     if (daily == nullptr || !cJSON_IsArray(daily)) {
         ESP_LOGE(TAG, "天气 JSON 缺少 daily 数组");
@@ -594,38 +677,70 @@ bool HomeDataStore::ParseWeatherResponse(const char* json_str) {
         return false;
     }
 
-    // 解析每日天气数据（最多 3 天）
-    int count = cJSON_GetArraySize(daily);
-    if (count > 3) count = 3;
+    // 清空详情缓存，避免接口返回天数减少时残留旧数据。
+    for (int i = 0; i < 4; ++i) {
+        data_.weather_detail[i] = WeatherDay{};
+    }
 
-    for (int i = 0; i < count; ++i) {
-        cJSON* day = cJSON_GetArrayItem(daily, i);
-        if (day == nullptr) continue;
-
+    auto parse_day = [](cJSON* day, WeatherDay& out) {
+        if (day == nullptr) {
+            return;
+        }
         cJSON* j_date = cJSON_GetObjectItem(day, "date");
         cJSON* j_text = cJSON_GetObjectItem(day, "text_day");
         cJSON* j_high = cJSON_GetObjectItem(day, "high");
-        cJSON* j_low  = cJSON_GetObjectItem(day, "low");
+        cJSON* j_low = cJSON_GetObjectItem(day, "low");
+        cJSON* j_humidity = cJSON_GetObjectItem(day, "humidity");
+        cJSON* j_wind_scale = cJSON_GetObjectItem(day, "wind_scale");
+        cJSON* j_precip = cJSON_GetObjectItem(day, "precip");
 
-        if (j_date && cJSON_IsString(j_date)) {
-            data_.weather[i].date = j_date->valuestring;
-        }
-        if (j_text && cJSON_IsString(j_text)) {
-            data_.weather[i].description = j_text->valuestring;
-        }
-        if (j_high && cJSON_IsString(j_high)) {
-            data_.weather[i].high_temp = j_high->valuestring;
-        }
-        if (j_low && cJSON_IsString(j_low)) {
-            data_.weather[i].low_temp = j_low->valuestring;
+        if (j_date && cJSON_IsString(j_date)) out.date = j_date->valuestring;
+        if (j_text && cJSON_IsString(j_text)) out.description = j_text->valuestring;
+        if (j_high && cJSON_IsString(j_high)) out.high_temp = j_high->valuestring;
+        if (j_low && cJSON_IsString(j_low)) out.low_temp = j_low->valuestring;
+        if (j_humidity && cJSON_IsString(j_humidity)) out.humidity = j_humidity->valuestring;
+        if (j_wind_scale && cJSON_IsString(j_wind_scale)) out.wind_scale = j_wind_scale->valuestring;
+        if (j_precip && cJSON_IsString(j_precip)) out.precip = j_precip->valuestring;
+    };
+
+    int raw_count = cJSON_GetArraySize(daily);
+    int detail_offset = raw_count >= 4 ? 0 : 1;
+    int detail_count = std::min(raw_count, 4 - detail_offset);
+    for (int i = 0; i < detail_count; ++i) {
+        parse_day(cJSON_GetArrayItem(daily, i), data_.weather_detail[i + detail_offset]);
+    }
+
+    // 首页保持今日/明日/后天三列。若接口支持 start=-1，则 detail[1..3] 对应首页；
+    // 若接口只返回未来三天，则 detail[0] 为空，detail[1..3] 仍按今日起填充。
+    for (int i = 0; i < 3; ++i) {
+        data_.weather[i] = data_.weather_detail[i + 1];
+        if (data_.weather[i].description.empty() && raw_count > i) {
+            parse_day(cJSON_GetArrayItem(daily, i), data_.weather[i]);
         }
 
-        ESP_LOGD(TAG, "天气[%d]: %s %s %s/%s°C",
+        ESP_LOGD(TAG, "天气[%d]: %s %s %s/%s°C humidity=%s wind=%s",
                  i,
                  data_.weather[i].date.c_str(),
                  data_.weather[i].description.c_str(),
                  data_.weather[i].high_temp.c_str(),
-                 data_.weather[i].low_temp.c_str());
+                 data_.weather[i].low_temp.c_str(),
+                 data_.weather[i].humidity.c_str(),
+                 data_.weather[i].wind_scale.c_str());
+    }
+
+    WeatherDay cached_yesterday;
+    Settings read_settings("setup");
+    if (data_.weather_detail[0].description.empty() &&
+        ParseWeatherDayJson(read_settings.GetString(WEATHER_LAST_TODAY_KEY), cached_yesterday) &&
+        cached_yesterday.date == GetDateOffsetString(-1)) {
+        data_.weather_detail[0] = cached_yesterday;
+        ESP_LOGI(TAG, "接口未返回昨日天气，使用本地缓存: %s", cached_yesterday.date.c_str());
+    }
+
+    if (!data_.weather[0].date.empty() && data_.weather[0].date == GetDateOffsetString(0)) {
+        Settings write_settings("setup", true);
+        write_settings.SetString(WEATHER_LAST_TODAY_KEY, SerializeWeatherDay(data_.weather[0]));
+        ESP_LOGI(TAG, "已保存今日天气到本地，供次日作为昨日天气使用: %s", data_.weather[0].date.c_str());
     }
 
     cJSON_Delete(root);

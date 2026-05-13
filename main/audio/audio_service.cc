@@ -807,6 +807,11 @@ bool AudioService::ToggleMusicPause() {
 }
 
 bool AudioService::PauseMusicPlayback() {
+    if (music_suspended_for_assistant_) {
+        music_paused_ = true;
+        ESP_LOGI(TAG, "Suspended music marked paused");
+        return true;
+    }
     if (!music_playing_) {
         return false;
     }
@@ -819,6 +824,10 @@ bool AudioService::PauseMusicPlayback() {
 }
 
 bool AudioService::ResumeMusicPlayback() {
+    if (music_suspended_for_assistant_) {
+        music_paused_ = false;
+        return ResumeSuspendedMusicForAssistant();
+    }
     if (!music_playing_) {
         return false;
     }
@@ -873,6 +882,7 @@ bool AudioService::ResumeSuspendedMusicForAssistant() {
     }
 
     auto url = suspended_music_url_;
+    bool keep_paused = music_paused_.load();
     music_suspended_for_assistant_ = false;
     suspended_music_url_.clear();
     assistant_audio_active_ = false;
@@ -886,7 +896,7 @@ bool AudioService::ResumeSuspendedMusicForAssistant() {
     ResetDecoder();
     music_url_ = url;
     music_stop_requested_ = false;
-    music_paused_ = false;
+    music_paused_ = keep_paused;
     music_playing_ = true;
     ESP_LOGI(TAG, "Create music playback task free_internal=%u free_psram=%u",
              static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)),
@@ -927,6 +937,19 @@ void AudioService::StopMusicPlayback() {
     music_playing_ = false;
     music_paused_ = false;
     assistant_audio_active_ = false;
+}
+
+void AudioService::CancelMusicPlayback() {
+    StopMusicPlayback();
+    music_suspended_for_assistant_ = false;
+    suspended_music_url_.clear();
+    music_url_.clear();
+    music_resume_offset_ = 0;
+    music_stream_offset_ = 0;
+    music_stop_requested_ = false;
+    music_playing_ = false;
+    music_paused_ = false;
+    ESP_LOGI(TAG, "Music playback cancelled");
 }
 
 void AudioService::MusicPlaybackTask() {

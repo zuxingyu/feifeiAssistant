@@ -38,6 +38,7 @@ private:
         kHome,
         kMusic,
         kSchedule,
+        kWeather,
     };
 
     esp_lcd_panel_io_handle_t io_handle = NULL;
@@ -177,6 +178,30 @@ private:
     bool schedule_show_dual_ = false;
     bool schedule_week_manual_ = false;
 
+    // 天气详情页面
+    lv_obj_t* weather_page_ = nullptr;
+    lv_obj_t* weather_top_bar_ = nullptr;
+    lv_obj_t* weather_temp_label_ = nullptr;
+    lv_obj_t* weather_humidity_label_ = nullptr;
+    lv_obj_t* weather_datetime_label_ = nullptr;
+    lv_obj_t* weather_wifi_icon_label_ = nullptr;
+    lv_obj_t* weather_battery_label_ = nullptr;
+    lv_obj_t* weather_day_labels_[4] = {};
+    lv_obj_t* weather_icon_labels_[4] = {};
+    lv_obj_t* weather_temp_range_labels_[4] = {};
+    lv_obj_t* weather_desc_labels_[4] = {};
+    lv_obj_t* weather_chart_area_ = nullptr;
+    lv_obj_t* weather_high_line_ = nullptr;
+    lv_obj_t* weather_low_line_ = nullptr;
+    lv_point_precise_t weather_high_points_[4] = {};
+    lv_point_precise_t weather_low_points_[4] = {};
+    lv_obj_t* weather_high_value_labels_[4] = {};
+    lv_obj_t* weather_low_value_labels_[4] = {};
+    lv_obj_t* weather_city_label_ = nullptr;
+    lv_obj_t* weather_metric_value_labels_[3] = {};
+    lv_obj_t* weather_metric_labels_[3] = {};
+    lv_obj_t* weather_chat_label_ = nullptr;
+
     lv_obj_t* activation_page_ = nullptr;
     lv_obj_t* activation_top_bar_ = nullptr;
     lv_obj_t* activation_temp_label_ = nullptr;
@@ -208,6 +233,7 @@ private:
     void CreateHomePage(lv_obj_t* screen);
     void CreateMusicPage(lv_obj_t* screen);
     void CreateSchedulePage(lv_obj_t* screen);
+    void CreateWeatherPage(lv_obj_t* screen);
     void SwitchPage(UiPage page);
     void UpdateWifiConfigMessage(const char* message);
     void UpdateTopBar(lv_obj_t* temp_label, lv_obj_t* humidity_label, lv_obj_t* datetime_label, lv_obj_t* battery_label);
@@ -221,19 +247,20 @@ private:
     void UpdateHomePage();
     static void HomeRefreshTimerCb(lv_timer_t* timer);
     void UpdateMusicPage();
+    void ResetMusicPage();
     std::string BuildMusicLyricsWindow() const;
     void UpdateMusicFromMessage(const char* role, const char* content);
     void ShowMusicChatMessage(const char* role, const char* content);
-    void StartMusicMockPlayback();
     static void MusicChatHideTimerCb(lv_timer_t* timer);
     static void MusicMockTimerCb(lv_timer_t* timer);
     void UpdateSchedulePage();
     void ShowScheduleChatMessage(const char* role, const char* content);
     static void ScheduleChatHideTimerCb(lv_timer_t* timer);
+    void UpdateWeatherPage();
 
 public:
     void SetupUI() override;
-    void CyclePage();  // 页面循环：Home→Music→Schedule→Home
+    void CyclePage();  // 页面循环：Home→Music→Schedule→Weather→Home
     bool HandleKeyLongPress();
     void SetStatus(const char* status) override;
     void ShowNotification(const char* notification, int duration_ms = 3000) override;

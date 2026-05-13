@@ -4,6 +4,7 @@
 #include <inttypes.h>
 #include <algorithm>
 #include <sstream>
+#include <cstdlib>
 #include <freertos/FreeRTOS.h>
 #include <esp_lcd_panel_io.h>
 #include <esp_log.h>
@@ -442,6 +443,19 @@ static bool get_json_int(cJSON* root, const char* key, int& value) {
     return true;
 }
 
+static bool parse_int_value(const std::string& text, int& value) {
+    if (text.empty()) {
+        return false;
+    }
+    char* end = nullptr;
+    long parsed = strtol(text.c_str(), &end, 10);
+    if (end == text.c_str()) {
+        return false;
+    }
+    value = static_cast<int>(parsed);
+    return true;
+}
+
 static bool is_tool_trace_text(const char* content) {
     if (content == nullptr) {
         return false;
@@ -464,42 +478,6 @@ static std::string format_music_time(int ms) {
     char buf[16];
     snprintf(buf, sizeof(buf), "%d:%02d", minutes, seconds);
     return buf;
-}
-
-struct MockLyricLine {
-    int time_ms;
-    const char* text;
-};
-
-static constexpr MockLyricLine kMockLyrics[] = {
-    {0, "准备播放一首测试歌曲"},
-    {5000, "一闪一闪亮晶晶"},
-    {12000, "满天都是小星星"},
-    {19000, "挂在天上放光明"},
-    {26000, "好像许多小眼睛"},
-    {34000, "音乐页进度正在更新"},
-    {43000, "后续会接入真实播放器"},
-    {52000, "歌词会跟随播放时间滚动"},
-    {61000, "现在先验证屏幕显示链路"},
-    {72000, "播放测试继续进行"},
-    {84000, "一闪一闪亮晶晶"},
-    {96000, "满天都是小星星"},
-    {108000, "挂在天上放光明"},
-    {120000, "好像许多小眼睛"},
-    {132000, "测试歌曲即将结束"},
-    {144000, "等待下一步接入音频"}
-};
-
-static int find_mock_lyric_index(int position_ms) {
-    int index = 0;
-    for (int i = 0; i < static_cast<int>(sizeof(kMockLyrics) / sizeof(kMockLyrics[0])); ++i) {
-        if (kMockLyrics[i].time_ms <= position_ms) {
-            index = i;
-        } else {
-            break;
-        }
-    }
-    return index;
 }
 
 static std::string trim_text(const std::string& text) {
@@ -1120,17 +1098,17 @@ void CustomLcdDisplay::CreateMusicPage(lv_obj_t* screen) {
     // ┌──────────────────────────────────────┐
     // │ 日期 时间 温度 湿度   WiFi  电池     │  <- 顶栏 (28px)
     // ├──────────────────────────────────────┤
-    // │          小星星                      │  <- 歌曲名
-    // │         儿童合唱团                   │  <- 歌手
+    // │          未在播放                    │  <- 歌曲名
+    // │                                      │  <- 歌手
     // ├──────────────────────────────────────┤
     // │ ████████░░░░░░░░░░  1:23    3:45    │  <- 进度条
     // ├──────────────────────────────────────┤
     // │       ⏮     ⏸     ⏭              │  <- 控制
     // ├──────────────────────────────────────┤
     // │ ┌──────────────────────────────────┐ │
-    // │ │   一闪一闪亮晶晶                  │ │  <- 歌词
-    // │ │   满天都是小星星                  │ │
-    // │ │   挂在天上放光明                  │ │
+    // │ │   暂无歌词                        │ │  <- 歌词
+    // │ │                                  │ │
+    // │ │                                  │ │
     // │ └──────────────────────────────────┘ │
     // └──────────────────────────────────────┘
     // ========================================================================
@@ -1483,6 +1461,207 @@ void CustomLcdDisplay::CreateSchedulePage(lv_obj_t* screen) {
     lv_obj_add_flag(schedule_page_, LV_OBJ_FLAG_HIDDEN);
 }
 
+void CustomLcdDisplay::CreateWeatherPage(lv_obj_t* screen) {
+    weather_page_ = CreateFullScreenPage(screen);
+
+    weather_top_bar_ = CreateTopBar(
+        weather_page_,
+        &weather_temp_label_,
+        &weather_humidity_label_,
+        &weather_datetime_label_,
+        &weather_wifi_icon_label_,
+        &weather_battery_label_,
+        true,
+        true,
+        true);
+
+    auto* main_area = lv_obj_create(weather_page_);
+    lv_obj_set_size(main_area, LV_HOR_RES, LV_VER_RES - 28);
+    lv_obj_align(main_area, LV_ALIGN_TOP_LEFT, 0, 28);
+    lv_obj_set_style_radius(main_area, 0, 0);
+    lv_obj_set_style_bg_color(main_area, lv_color_white(), 0);
+    lv_obj_set_style_border_width(main_area, 0, 0);
+    lv_obj_set_style_pad_all(main_area, 0, 0);
+    lv_obj_set_scrollbar_mode(main_area, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_set_flex_flow(main_area, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(main_area, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    auto* days_strip = lv_obj_create(main_area);
+    lv_obj_set_size(days_strip, LV_HOR_RES, 86);
+    lv_obj_set_style_radius(days_strip, 0, 0);
+    lv_obj_set_style_bg_color(days_strip, lv_color_white(), 0);
+    lv_obj_set_style_border_width(days_strip, 1, 0);
+    lv_obj_set_style_border_side(days_strip, LV_BORDER_SIDE_BOTTOM, 0);
+    lv_obj_set_style_border_color(days_strip, lv_color_black(), 0);
+    lv_obj_set_style_pad_left(days_strip, 2, 0);
+    lv_obj_set_style_pad_right(days_strip, 2, 0);
+    lv_obj_set_style_pad_top(days_strip, 2, 0);
+    lv_obj_set_style_pad_bottom(days_strip, 2, 0);
+    lv_obj_set_scrollbar_mode(days_strip, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_set_flex_flow(days_strip, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(days_strip, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    for (int i = 0; i < 4; ++i) {
+        auto* col = lv_obj_create(days_strip);
+        lv_obj_set_width(col, LV_PCT(24));
+        lv_obj_set_flex_grow(col, 1);
+        lv_obj_set_style_radius(col, 0, 0);
+        lv_obj_set_style_bg_color(col, lv_color_white(), 0);
+        lv_obj_set_style_border_width(col, 0, 0);
+        lv_obj_set_style_pad_all(col, 1, 0);
+        lv_obj_set_style_pad_row(col, 0, 0);
+        lv_obj_set_scrollbar_mode(col, LV_SCROLLBAR_MODE_OFF);
+        lv_obj_set_flex_flow(col, LV_FLEX_FLOW_COLUMN);
+        lv_obj_set_flex_align(col, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+        weather_day_labels_[i] = lv_label_create(col);
+        lv_obj_set_style_text_font(weather_day_labels_[i], &alibaba_puhui_14, 0);
+        lv_obj_set_style_text_color(weather_day_labels_[i], lv_color_black(), 0);
+        lv_label_set_text(weather_day_labels_[i], "--");
+
+        weather_icon_labels_[i] = lv_label_create(col);
+        lv_obj_set_style_text_font(weather_icon_labels_[i], &font_awesome_16_4, 0);
+        lv_obj_set_style_text_color(weather_icon_labels_[i], lv_color_black(), 0);
+        lv_label_set_text(weather_icon_labels_[i], "");
+
+        weather_temp_range_labels_[i] = lv_label_create(col);
+        lv_obj_set_style_text_font(weather_temp_range_labels_[i], &alibaba_puhui_14, 0);
+        lv_obj_set_style_text_color(weather_temp_range_labels_[i], lv_color_black(), 0);
+        lv_label_set_long_mode(weather_temp_range_labels_[i], LV_LABEL_LONG_DOT);
+        lv_label_set_text(weather_temp_range_labels_[i], "--°C");
+
+        weather_desc_labels_[i] = lv_label_create(col);
+        lv_obj_set_style_text_font(weather_desc_labels_[i], &alibaba_puhui_14, 0);
+        lv_obj_set_style_text_color(weather_desc_labels_[i], lv_color_black(), 0);
+        lv_label_set_long_mode(weather_desc_labels_[i], LV_LABEL_LONG_DOT);
+        lv_label_set_text(weather_desc_labels_[i], "--");
+
+        if (i < 3) {
+            auto* sep = lv_obj_create(days_strip);
+            lv_obj_set_size(sep, 1, 70);
+            lv_obj_set_style_radius(sep, 0, 0);
+            lv_obj_set_style_bg_color(sep, lv_color_black(), 0);
+            lv_obj_set_style_border_width(sep, 0, 0);
+            lv_obj_set_style_pad_all(sep, 0, 0);
+        }
+    }
+
+    weather_chart_area_ = lv_obj_create(main_area);
+    lv_obj_set_size(weather_chart_area_, LV_HOR_RES - 28, 96);
+    lv_obj_set_style_radius(weather_chart_area_, 0, 0);
+    lv_obj_set_style_bg_color(weather_chart_area_, lv_color_white(), 0);
+    lv_obj_set_style_border_width(weather_chart_area_, 1, 0);
+    lv_obj_set_style_border_color(weather_chart_area_, lv_color_black(), 0);
+    lv_obj_set_style_pad_all(weather_chart_area_, 0, 0);
+    lv_obj_set_style_margin_top(weather_chart_area_, 4, 0);
+    lv_obj_set_scrollbar_mode(weather_chart_area_, LV_SCROLLBAR_MODE_OFF);
+
+    auto* chart_title = lv_label_create(weather_chart_area_);
+    lv_obj_set_style_text_font(chart_title, &alibaba_puhui_14, 0);
+    lv_obj_set_style_text_color(chart_title, lv_color_black(), 0);
+    lv_label_set_text(chart_title, "温度走势");
+    lv_obj_align(chart_title, LV_ALIGN_TOP_LEFT, 6, 2);
+
+    weather_high_line_ = lv_line_create(weather_chart_area_);
+    lv_obj_set_style_line_width(weather_high_line_, 2, 0);
+    lv_obj_set_style_line_color(weather_high_line_, lv_color_black(), 0);
+    lv_line_set_points(weather_high_line_, weather_high_points_, 4);
+
+    weather_low_line_ = lv_line_create(weather_chart_area_);
+    lv_obj_set_style_line_width(weather_low_line_, 1, 0);
+    lv_obj_set_style_line_color(weather_low_line_, lv_color_black(), 0);
+    lv_line_set_points(weather_low_line_, weather_low_points_, 4);
+
+    for (int i = 0; i < 4; ++i) {
+        weather_high_value_labels_[i] = lv_label_create(weather_chart_area_);
+        lv_obj_set_style_text_font(weather_high_value_labels_[i], &alibaba_puhui_14, 0);
+        lv_obj_set_style_text_color(weather_high_value_labels_[i], lv_color_black(), 0);
+        lv_label_set_text(weather_high_value_labels_[i], "--");
+
+        weather_low_value_labels_[i] = lv_label_create(weather_chart_area_);
+        lv_obj_set_style_text_font(weather_low_value_labels_[i], &alibaba_puhui_14, 0);
+        lv_obj_set_style_text_color(weather_low_value_labels_[i], lv_color_black(), 0);
+        lv_label_set_text(weather_low_value_labels_[i], "--");
+    }
+
+    auto* metrics_area = lv_obj_create(main_area);
+    lv_obj_set_width(metrics_area, LV_HOR_RES);
+    lv_obj_set_height(metrics_area, 32);
+    lv_obj_set_flex_grow(metrics_area, 1);
+    lv_obj_set_style_radius(metrics_area, 0, 0);
+    lv_obj_set_style_bg_color(metrics_area, lv_color_white(), 0);
+    lv_obj_set_style_border_width(metrics_area, 0, 0);
+    lv_obj_set_style_pad_left(metrics_area, 14, 0);
+    lv_obj_set_style_pad_right(metrics_area, 14, 0);
+    lv_obj_set_style_pad_top(metrics_area, 4, 0);
+    lv_obj_set_style_pad_bottom(metrics_area, 0, 0);
+    lv_obj_set_scrollbar_mode(metrics_area, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_set_style_pad_row(metrics_area, 0, 0);
+    lv_obj_set_style_pad_column(metrics_area, 0, 0);
+    lv_obj_set_flex_flow(metrics_area, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(metrics_area, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    weather_city_label_ = nullptr;
+
+    static constexpr const char* kMetricNames[3] = {"湿度", "风力", "降水"};
+    for (int i = 0; i < 3; ++i) {
+        auto* metric_col = lv_obj_create(metrics_area);
+        lv_obj_set_width(metric_col, LV_PCT(33));
+        lv_obj_set_height(metric_col, 32);
+        lv_obj_set_style_radius(metric_col, 0, 0);
+        lv_obj_set_style_bg_color(metric_col, lv_color_white(), 0);
+        lv_obj_set_style_border_width(metric_col, 0, 0);
+        lv_obj_set_style_pad_all(metric_col, 0, 0);
+        lv_obj_set_style_pad_row(metric_col, 0, 0);
+        lv_obj_set_scrollbar_mode(metric_col, LV_SCROLLBAR_MODE_OFF);
+        lv_obj_set_flex_flow(metric_col, LV_FLEX_FLOW_COLUMN);
+        lv_obj_set_flex_align(metric_col, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+        weather_metric_labels_[i] = lv_label_create(metric_col);
+        lv_obj_set_width(weather_metric_labels_[i], LV_PCT(100));
+        lv_obj_set_height(weather_metric_labels_[i], 15);
+        lv_obj_set_style_text_font(weather_metric_labels_[i], &alibaba_puhui_14, 0);
+        lv_obj_set_style_text_color(weather_metric_labels_[i], lv_color_black(), 0);
+        lv_obj_set_style_text_align(weather_metric_labels_[i], LV_TEXT_ALIGN_CENTER, 0);
+        lv_label_set_long_mode(weather_metric_labels_[i], LV_LABEL_LONG_DOT);
+        lv_label_set_text(weather_metric_labels_[i], kMetricNames[i]);
+
+        weather_metric_value_labels_[i] = lv_label_create(metric_col);
+        lv_obj_set_width(weather_metric_value_labels_[i], LV_PCT(100));
+        lv_obj_set_height(weather_metric_value_labels_[i], 15);
+        lv_obj_set_style_text_font(weather_metric_value_labels_[i], &alibaba_puhui_14, 0);
+        lv_obj_set_style_text_color(weather_metric_value_labels_[i], lv_color_black(), 0);
+        lv_obj_set_style_text_align(weather_metric_value_labels_[i], LV_TEXT_ALIGN_CENTER, 0);
+        lv_label_set_long_mode(weather_metric_value_labels_[i], LV_LABEL_LONG_DOT);
+        lv_label_set_text(weather_metric_value_labels_[i], "--");
+    }
+
+    auto* bottom_strip = lv_obj_create(main_area);
+    lv_obj_set_size(bottom_strip, LV_HOR_RES, 24);
+    lv_obj_set_style_radius(bottom_strip, 0, 0);
+    lv_obj_set_style_bg_color(bottom_strip, lv_color_white(), 0);
+    lv_obj_set_style_border_width(bottom_strip, 1, 0);
+    lv_obj_set_style_border_side(bottom_strip, LV_BORDER_SIDE_TOP, 0);
+    lv_obj_set_style_border_color(bottom_strip, lv_color_black(), 0);
+    lv_obj_set_style_pad_left(bottom_strip, 14, 0);
+    lv_obj_set_style_pad_right(bottom_strip, 14, 0);
+    lv_obj_set_style_pad_top(bottom_strip, 2, 0);
+    lv_obj_set_style_pad_bottom(bottom_strip, 2, 0);
+    lv_obj_set_scrollbar_mode(bottom_strip, LV_SCROLLBAR_MODE_OFF);
+
+    weather_chat_label_ = lv_label_create(bottom_strip);
+    lv_obj_set_width(weather_chat_label_, LV_HOR_RES - 28);
+    lv_obj_set_height(weather_chat_label_, 18);
+    lv_obj_set_style_text_font(weather_chat_label_, &alibaba_puhui_14, 0);
+    lv_obj_set_style_text_color(weather_chat_label_, lv_color_black(), 0);
+    lv_obj_set_style_text_align(weather_chat_label_, LV_TEXT_ALIGN_LEFT, 0);
+    lv_label_set_long_mode(weather_chat_label_, LV_LABEL_LONG_DOT);
+    lv_label_set_text(weather_chat_label_, "小智: 待命");
+
+    UpdateTopBar(weather_temp_label_, weather_humidity_label_, weather_datetime_label_, weather_battery_label_);
+    lv_obj_add_flag(weather_page_, LV_OBJ_FLAG_HIDDEN);
+}
+
 void CustomLcdDisplay::UpdateMusicPage() {
     const std::string title = music_title_text_.empty() ? "未在播放" : music_title_text_;
     if (music_title_label_ != nullptr) {
@@ -1539,6 +1718,21 @@ void CustomLcdDisplay::UpdateMusicPage() {
         }
         lv_label_set_text(music_lyrics_label_, lyric.c_str());
     }
+}
+
+void CustomLcdDisplay::ResetMusicPage() {
+    music_title_text_.clear();
+    music_artist_text_.clear();
+    music_album_text_.clear();
+    music_lyric_text_.clear();
+    music_lyric_lines_.clear();
+    music_playback_state_.clear();
+    music_position_ms_ = 0;
+    music_duration_ms_ = 0;
+    if (music_mock_timer_ != nullptr) {
+        lv_timer_pause(music_mock_timer_);
+    }
+    UpdateMusicPage();
 }
 
 void CustomLcdDisplay::UpdateSchedulePage() {
@@ -1670,6 +1864,153 @@ void CustomLcdDisplay::UpdateSchedulePage() {
     }
 }
 
+void CustomLcdDisplay::UpdateWeatherPage() {
+    if (home_data_store_ == nullptr) {
+        return;
+    }
+
+    const HomeData& data = home_data_store_->GetHomeData();
+    static constexpr const char* kDayTexts[4] = {"昨天", "今天", "明天", "后天"};
+
+    int highs[4] = {};
+    int lows[4] = {};
+    bool temp_valid[4] = {};
+    bool has_temp = false;
+
+    for (int i = 0; i < 4; ++i) {
+        const WeatherDay& w = data.weather_detail[i];
+        if (weather_day_labels_[i] != nullptr) {
+            lv_label_set_text(weather_day_labels_[i], kDayTexts[i]);
+        }
+        if (weather_icon_labels_[i] != nullptr) {
+            lv_label_set_text(weather_icon_labels_[i], get_weather_icon(w.description));
+        }
+        if (weather_temp_range_labels_[i] != nullptr) {
+            char tbuf[32];
+            if (!w.low_temp.empty() || !w.high_temp.empty()) {
+                snprintf(tbuf, sizeof(tbuf), "%s°C-%s°C",
+                         w.low_temp.empty() ? "--" : w.low_temp.c_str(),
+                         w.high_temp.empty() ? "--" : w.high_temp.c_str());
+            } else {
+                snprintf(tbuf, sizeof(tbuf), "--°C");
+            }
+            lv_label_set_text(weather_temp_range_labels_[i], tbuf);
+        }
+        if (weather_desc_labels_[i] != nullptr) {
+            lv_label_set_text(weather_desc_labels_[i], w.description.empty() ? "--" : w.description.c_str());
+        }
+
+        int high = 0;
+        int low = 0;
+        if (parse_int_value(w.high_temp, high) && parse_int_value(w.low_temp, low)) {
+            highs[i] = high;
+            lows[i] = low;
+            temp_valid[i] = true;
+            has_temp = true;
+        } else {
+            highs[i] = 0;
+            lows[i] = 0;
+        }
+    }
+
+    for (int i = 0; i < 4; ++i) {
+        if (temp_valid[i]) {
+            continue;
+        }
+        int fallback = -1;
+        for (int j = i + 1; j < 4; ++j) {
+            if (temp_valid[j]) {
+                fallback = j;
+                break;
+            }
+        }
+        if (fallback < 0) {
+            for (int j = i - 1; j >= 0; --j) {
+                if (temp_valid[j]) {
+                    fallback = j;
+                    break;
+                }
+            }
+        }
+        if (fallback >= 0) {
+            highs[i] = highs[fallback];
+            lows[i] = lows[fallback];
+        }
+    }
+
+    if (weather_high_line_ != nullptr && weather_low_line_ != nullptr) {
+        constexpr int kChartX0 = 28;
+        constexpr int kChartY0 = 24;
+        const int kChartWidth = LV_HOR_RES - 84;
+        constexpr int kChartHeight = 56;
+        int min_temp = 100;
+        int max_temp = -100;
+        for (int i = 0; i < 4; ++i) {
+            if (has_temp) {
+                min_temp = std::min(min_temp, lows[i]);
+                max_temp = std::max(max_temp, highs[i]);
+            }
+        }
+        if (!has_temp || min_temp > max_temp) {
+            min_temp = 0;
+            max_temp = 1;
+        }
+        if (max_temp == min_temp) {
+            max_temp += 1;
+        }
+
+        for (int i = 0; i < 4; ++i) {
+            int x = kChartX0 + (kChartWidth * i) / 3;
+            int high_y = kChartY0 + kChartHeight - ((highs[i] - min_temp) * kChartHeight) / (max_temp - min_temp);
+            int low_y = kChartY0 + kChartHeight - ((lows[i] - min_temp) * kChartHeight) / (max_temp - min_temp);
+            weather_high_points_[i].x = x;
+            weather_high_points_[i].y = high_y;
+            weather_low_points_[i].x = x;
+            weather_low_points_[i].y = low_y;
+        }
+        lv_line_set_points(weather_high_line_, weather_high_points_, 4);
+        lv_line_set_points(weather_low_line_, weather_low_points_, 4);
+
+        for (int i = 0; i < 4; ++i) {
+            char high_buf[12];
+            char low_buf[12];
+            if (has_temp) {
+                snprintf(high_buf, sizeof(high_buf), "%d°", highs[i]);
+                snprintf(low_buf, sizeof(low_buf), "%d°", lows[i]);
+            } else {
+                snprintf(high_buf, sizeof(high_buf), "--");
+                snprintf(low_buf, sizeof(low_buf), "--");
+            }
+            if (weather_high_value_labels_[i] != nullptr) {
+                lv_label_set_text(weather_high_value_labels_[i], high_buf);
+                lv_obj_align(weather_high_value_labels_[i], LV_ALIGN_TOP_LEFT,
+                             weather_high_points_[i].x - 10,
+                             std::max(14, static_cast<int>(weather_high_points_[i].y) - 18));
+            }
+            if (weather_low_value_labels_[i] != nullptr) {
+                lv_label_set_text(weather_low_value_labels_[i], low_buf);
+                lv_obj_align(weather_low_value_labels_[i], LV_ALIGN_TOP_LEFT,
+                             weather_low_points_[i].x - 10,
+                             std::min(78, static_cast<int>(weather_low_points_[i].y) + 2));
+            }
+        }
+    }
+
+    const WeatherDay& today = data.weather_detail[1];
+    if (weather_metric_value_labels_[0] != nullptr) {
+        std::string text = today.humidity.empty() ? std::string("--") : today.humidity + "%";
+        lv_label_set_text(weather_metric_value_labels_[0], text.c_str());
+    }
+    if (weather_metric_value_labels_[1] != nullptr) {
+        std::string text = today.wind_scale.empty() ? std::string("--") : today.wind_scale + "级";
+        lv_label_set_text(weather_metric_value_labels_[1], text.c_str());
+    }
+    if (weather_metric_value_labels_[2] != nullptr) {
+        std::string text = today.precip.empty() ? std::string("--") : today.precip + "%";
+        lv_label_set_text(weather_metric_value_labels_[2], text.c_str());
+    }
+}
+
 void CustomLcdDisplay::ShowScheduleChatMessage(const char* role, const char* content) {
     SetSharedChatMessage(role, content);
 }
@@ -1685,28 +2026,6 @@ void CustomLcdDisplay::ScheduleChatHideTimerCb(lv_timer_t* timer) {
 }
 
 std::string CustomLcdDisplay::BuildMusicLyricsWindow() const {
-    if (music_title_text_ == "小星星" && music_artist_text_ == "苗苗播放器") {
-        constexpr int lyric_count = static_cast<int>(sizeof(kMockLyrics) / sizeof(kMockLyrics[0]));
-        int current_index = find_mock_lyric_index(music_position_ms_);
-        int start = std::max(0, current_index - 1);
-        int end = std::min(lyric_count - 1, start + 3);
-        start = std::max(0, end - 3);
-
-        std::string text;
-        for (int i = start; i <= end; ++i) {
-            if (!text.empty()) {
-                text += "\n";
-            }
-            if (i == current_index) {
-                text += "> ";
-            } else {
-                text += "  ";
-            }
-            text += kMockLyrics[i].text;
-        }
-        return text;
-    }
-
     if (!music_lyric_lines_.empty()) {
         int current_index = 0;
         bool has_timed_line = false;
@@ -1832,8 +2151,7 @@ void CustomLcdDisplay::UpdateMusicFromMessage(const char* role, const char* cont
                 lv_timer_reset(music_mock_timer_);
                 lv_timer_resume(music_mock_timer_);
             }
-        } else if (!(music_title_text_ == "小星星" && music_artist_text_ == "苗苗播放器") &&
-                   music_mock_timer_ != nullptr) {
+        } else if (music_mock_timer_ != nullptr) {
             lv_timer_pause(music_mock_timer_);
         }
         SwitchPage(UiPage::kMusic);
@@ -1863,26 +2181,6 @@ void CustomLcdDisplay::ShowMusicChatMessage(const char* role, const char* conten
     lv_timer_set_repeat_count(music_chat_hide_timer_, 1);
 }
 
-void CustomLcdDisplay::StartMusicMockPlayback() {
-    music_title_text_ = "小星星";
-    music_artist_text_ = "苗苗播放器";
-    music_album_text_ = "屏幕测试";
-    music_playback_state_ = "播放中";
-    music_duration_ms_ = 150000;
-    music_position_ms_ = 0;
-    music_lyric_text_ = kMockLyrics[0].text;
-    music_lyric_lines_.clear();
-
-    UpdateMusicPage();
-
-    if (music_mock_timer_ == nullptr) {
-        music_mock_timer_ = lv_timer_create(MusicMockTimerCb, 1000, this);
-    } else {
-        lv_timer_reset(music_mock_timer_);
-        lv_timer_resume(music_mock_timer_);
-    }
-}
-
 void CustomLcdDisplay::MusicMockTimerCb(lv_timer_t* timer) {
     auto* self = timer != nullptr ? static_cast<CustomLcdDisplay*>(lv_timer_get_user_data(timer)) : nullptr;
     if (self == nullptr) {
@@ -1891,12 +2189,9 @@ void CustomLcdDisplay::MusicMockTimerCb(lv_timer_t* timer) {
 
     self->music_position_ms_ += 1000;
     if (self->music_duration_ms_ > 0 && self->music_position_ms_ > self->music_duration_ms_) {
-        self->music_position_ms_ = self->music_duration_ms_;
         lv_timer_pause(timer);
-    }
-
-    if (self->music_title_text_ == "小星星" && self->music_artist_text_ == "苗苗播放器") {
-        self->music_lyric_text_ = kMockLyrics[find_mock_lyric_index(self->music_position_ms_)].text;
+        self->ResetMusicPage();
+        return;
     }
     self->UpdateMusicPage();
 }
@@ -1999,6 +2294,7 @@ void CustomLcdDisplay::SwitchPage(UiPage page) {
     set_visible(home_page_, page == UiPage::kHome);
     set_visible(music_page_, page == UiPage::kMusic);
     set_visible(schedule_page_, page == UiPage::kSchedule);
+    set_visible(weather_page_, page == UiPage::kWeather);
     SyncSharedChatLabels();
 }
 
@@ -2009,16 +2305,16 @@ void CustomLcdDisplay::CyclePage() {
     }
     if (current_page_ == UiPage::kHome) {
         SwitchPage(UiPage::kMusic);
-        if (music_title_text_.empty()) {
-            StartMusicMockPlayback();
-        } else {
-            UpdateMusicPage();
-        }
+        UpdateMusicPage();
     } else if (current_page_ == UiPage::kMusic) {
         SwitchPage(UiPage::kSchedule);
         UpdateTopBar(schedule_temp_label_, schedule_humidity_label_, schedule_datetime_label_, schedule_battery_label_);
         UpdateSchedulePage();
     } else if (current_page_ == UiPage::kSchedule) {
+        SwitchPage(UiPage::kWeather);
+        UpdateTopBar(weather_temp_label_, weather_humidity_label_, weather_datetime_label_, weather_battery_label_);
+        UpdateWeatherPage();
+    } else if (current_page_ == UiPage::kWeather) {
         SwitchPage(UiPage::kHome);
     }
     Unlock();
@@ -2162,6 +2458,8 @@ void CustomLcdDisplay::TopBarTimerCb(lv_timer_t* timer) {
                        self->music_datetime_label_, self->music_battery_label_);
     self->UpdateTopBar(self->schedule_temp_label_, self->schedule_humidity_label_,
                        self->schedule_datetime_label_, self->schedule_battery_label_);
+    self->UpdateTopBar(self->weather_temp_label_, self->weather_humidity_label_,
+                       self->weather_datetime_label_, self->weather_battery_label_);
 }
 
 void CustomLcdDisplay::UpdateTopBar(lv_obj_t* temp_label, lv_obj_t* humidity_label, lv_obj_t* datetime_label, lv_obj_t* battery_label) {
@@ -2310,6 +2608,9 @@ void CustomLcdDisplay::SyncSharedChatLabels() {
     if (schedule_chat_label_ != nullptr) {
         lv_label_set_text(schedule_chat_label_, text);
     }
+    if (weather_chat_label_ != nullptr) {
+        lv_label_set_text(weather_chat_label_, text);
+    }
 }
 
 // ============================================================================
@@ -2435,6 +2736,9 @@ void CustomLcdDisplay::UpdateHomePage() {
     set_weather_col(home_weather_day2_label_, home_weather_icon2_label_,
                     home_weather_temp2_label_, home_weather_desc2_label_,
                     data.weather[2], "后天");
+    if (current_page_ == UiPage::kWeather) {
+        UpdateWeatherPage();
+    }
 
     // 天气数据诊断
     ESP_LOGI(TAG, "Weather: d0=%s(%s/%s) d1=%s(%s/%s) d2=%s(%s/%s)",
@@ -2587,6 +2891,7 @@ void CustomLcdDisplay::SetupUI() {
     CreateHomePage(screen);
     CreateMusicPage(screen);
     CreateSchedulePage(screen);
+    CreateWeatherPage(screen);
     SwitchPage(UiPage::kBoot);
 
     if (top_bar_timer_ == nullptr) {
@@ -2661,6 +2966,8 @@ void CustomLcdDisplay::SetChatMessage(const char* role, const char* content) {
         UpdateMusicFromMessage(role, content);
     } else if (current_page_ == UiPage::kSchedule && content != nullptr && content[0] != '\0') {
         ShowScheduleChatMessage(role, content);
+    } else if (current_page_ == UiPage::kWeather && content != nullptr && content[0] != '\0') {
+        SetSharedChatMessage(role, content);
     } else if (current_page_ == UiPage::kHome && content != nullptr && content[0] != '\0') {
         SetSharedChatMessage(role, content);
     }

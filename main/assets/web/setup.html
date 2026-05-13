@@ -102,6 +102,7 @@ body{background:linear-gradient(135deg,#667eea,#764ba2);min-height:100vh;display
     <div class="ib">请到 <b>心和天气</b> (seniverse.com) 注册免费账号获取 API 私钥。免费版每日400次。</div>
     <div class="ig"><label>API 私钥 <span style="font-size:11px;color:#999">必填</span></label><input type="text" id="ak" placeholder="请输入心和天气 API 私钥"></div>
     <div class="ig"><label>城市 <span style="font-size:11px;color:#999">默认IP定位</span></label><input type="text" id="ct" placeholder="例如: 北京、上海"></div>
+    <div class="ig"><label>音乐解析服务 <span style="font-size:11px;color:#999">可选</span></label><input type="text" id="mr" placeholder="例如: http://192.168.0.104:8765/prepare"></div>
     <div class="err" id="e3"></div>
     <div class="ba"><button class="btn bp" onclick="gs(2)">← 上一步</button><button class="btn bn" id="web" onclick="swv()">下一步 →</button></div>
   </div>
@@ -168,9 +169,9 @@ function ssv(){cl();document.getElementById('e2').style.display='none';var b=doc
 fetch('/api/config/status').then(function(r){return r.json()}).then(function(d){if(d.semester_start)document.getElementById('ss').value=d.semester_start;if(d.semester_end)document.getElementById('se').value=d.semester_end;if(d.schedule_single)sd.single=d.schedule_single;if(d.schedule_double)sd.double=d.schedule_double}).catch(function(){});rd();
 
 // Weather
-fetch('/api/config/status').then(function(r){return r.json()}).then(function(d){if(d.weather_key)document.getElementById('ak').value=d.weather_key;if(d.weather_city)document.getElementById('ct').value=d.weather_city}).catch(function(){});
+fetch('/api/config/status').then(function(r){return r.json()}).then(function(d){if(d.weather_key)document.getElementById('ak').value=d.weather_key;if(d.weather_city)document.getElementById('ct').value=d.weather_city;if(d.music_resolver)document.getElementById('mr').value=d.music_resolver}).catch(function(){});
 function swv(){document.getElementById('e3').style.display='none';var b=document.getElementById('web');b.disabled=true;b.textContent='保存中...';
-  var d={api_key:document.getElementById('ak').value.trim(),city:document.getElementById('ct').value.trim()};
+  var d={api_key:document.getElementById('ak').value.trim(),city:document.getElementById('ct').value.trim(),music_resolver:document.getElementById('mr').value.trim()};
   fetch('/api/weather',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)})
   .then(function(r){return r.json()}).then(function(j){if(j.success){ts('天气已保存');gs(4)}else{var e=document.getElementById('e3');e.textContent='保存失败';e.style.display='block';b.disabled=false;b.textContent='下一步 →'}})
   .catch(function(){var e=document.getElementById('e3');e.textContent='网络错误';e.style.display='block';b.disabled=false;b.textContent='下一步 →'})}

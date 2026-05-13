@@ -33,6 +33,7 @@
 <div class="info-box">请到 <b>心和天气</b> (seniverse.com) 注册免费账号获取 API 私钥。免费版每日400次。</div>
 <div class="input-group"><label>API 私钥 <span style="font-size:11px;color:#999">必填</span></label><input type="text" id="api_key" placeholder="请输入心和天气 API 私钥"></div>
 <div class="input-group"><label>城市名称 <span style="font-size:11px;color:#999">默认IP自动定位</span></label><input type="text" id="city" placeholder="例如: 北京、上海、深圳"></div>
+<div class="input-group"><label>音乐解析服务 <span style="font-size:11px;color:#999">可选</span></label><input type="text" id="music_resolver" placeholder="例如: http://192.168.0.104:8765/prepare"></div>
 <div class="error" id="err"></div>
 <div class="btn-area">
 <button class="btn btn-prev" onclick="location.href='/schedule.html'">← 上一步</button>
@@ -40,9 +41,9 @@
 </div>
 </div></div>
 <script>
-fetch('/api/config/status').then(function(r){return r.json()}).then(function(d){if(d.weather_key)document.getElementById('api_key').value=d.weather_key;if(d.weather_city)document.getElementById('city').value=d.weather_city}).catch(function(){});
+fetch('/api/config/status').then(function(r){return r.json()}).then(function(d){if(d.weather_key)document.getElementById('api_key').value=d.weather_key;if(d.weather_city)document.getElementById('city').value=d.weather_city;if(d.music_resolver)document.getElementById('music_resolver').value=d.music_resolver}).catch(function(){});
 function save(){
 document.getElementById('err').style.display='none';var b=document.getElementById('saveBtn');b.disabled=true;b.textContent='保存中...';
-var d={api_key:document.getElementById('api_key').value.trim(),city:document.getElementById('city').value.trim()};
+var d={api_key:document.getElementById('api_key').value.trim(),city:document.getElementById('city').value.trim(),music_resolver:document.getElementById('music_resolver').value.trim()};
 fetch('/api/weather',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)}).then(function(r){return r.json()}).then(function(j){if(j.success)location.href='/done.html';else{var e=document.getElementById('err');e.textContent='保存失败';e.style.display='block';b.disabled=false;b.textContent='下一步 →'}}).catch(function(){var e=document.getElementById('err');e.textContent='网络错误';e.style.display='block';b.disabled=false;b.textContent='下一步 →'})}
 </script></body></html>

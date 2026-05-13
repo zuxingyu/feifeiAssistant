@@ -49,6 +49,7 @@ static esp_err_t api_config_status_handler(httpd_req_t* req) {
     // Weather: namespace "setup", key "weather_secret" and "weather_city"
     std::string weather_key = settings.GetString("weather_secret", "");
     std::string weather_city = settings.GetString("weather_city", "");
+    std::string music_resolver = settings.GetString("music_resolver", "");
     std::string wifi_ssid = settings.GetString("wifi_ssid", "");
 
     cJSON* root = cJSON_CreateObject();
@@ -57,6 +58,7 @@ static esp_err_t api_config_status_handler(httpd_req_t* req) {
     cJSON_AddBoolToObject(root, "wifi_configured", !wifi_ssid.empty());
     cJSON_AddStringToObject(root, "weather_key", weather_key.c_str());
     cJSON_AddStringToObject(root, "weather_city", weather_city.c_str());
+    cJSON_AddStringToObject(root, "music_resolver", music_resolver.c_str());
     cJSON_AddStringToObject(root, "wifi_ssid", wifi_ssid.c_str());
 
     // Parse schedule JSON to extract individual fields
@@ -176,6 +178,17 @@ static esp_err_t api_weather_handler(httpd_req_t* req) {
     if (cJSON_IsString(city) && strlen(city->valuestring) > 0) {
         settings.SetString("weather_city", city->valuestring);
         ESP_LOGI(TAG, "Weather city saved: %s", city->valuestring);
+    }
+
+    cJSON* music_resolver = cJSON_GetObjectItem(json, "music_resolver");
+    if (cJSON_IsString(music_resolver)) {
+        if (strlen(music_resolver->valuestring) > 0) {
+            settings.SetString("music_resolver", music_resolver->valuestring);
+            ESP_LOGI(TAG, "Music resolver saved: %s", music_resolver->valuestring);
+        } else {
+            settings.EraseKey("music_resolver");
+            ESP_LOGI(TAG, "Music resolver cleared, fallback to firmware default");
+        }
     }
 
     cJSON_Delete(json);
