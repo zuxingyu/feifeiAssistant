@@ -766,6 +766,10 @@ void AudioService::PlayMusicUrl(const std::string& url) {
         return;
     }
 
+    music_suspended_for_assistant_ = false;
+    suspended_music_url_.clear();
+    music_resume_offset_ = 0;
+    music_stream_offset_ = 0;
     StopMusicPlayback();
     ResetDecoder();
     music_url_ = url;
@@ -775,7 +779,7 @@ void AudioService::PlayMusicUrl(const std::string& url) {
     ESP_LOGI(TAG, "Create music playback task free_internal=%u free_psram=%u",
              static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)),
              static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_SPIRAM)));
-    constexpr uint32_t kMusicTaskStackSize = 12 * 1024;
+    constexpr uint32_t kMusicTaskStackSize = 8 * 1024;
     if (xTaskCreate([](void* arg) {
             auto* audio_service = static_cast<AudioService*>(arg);
             audio_service->MusicPlaybackTask();
@@ -831,6 +835,80 @@ void AudioService::SetAssistantAudioActive(bool active) {
     ESP_LOGI(TAG, "Assistant audio %s", active ? "active" : "inactive");
 }
 
+bool AudioService::SuspendMusicForAssistant() {
+    assistant_audio_active_ = true;
+    if (music_suspended_for_assistant_) {
+        return true;
+    }
+    if (!music_playing_) {
+        return false;
+    }
+
+    suspended_music_url_ = music_url_;
+    music_resume_offset_ = music_stream_offset_.load();
+    music_suspended_for_assistant_ = true;
+    ESP_LOGI(TAG, "Suspend music stream for assistant offset=%u free_internal=%u free_psram=%u",
+             static_cast<unsigned>(music_resume_offset_.load()),
+             static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)),
+             static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_SPIRAM)));
+    StopMusicPlayback();
+    assistant_audio_active_ = true;
+    ResetDecoder();
+    {
+        std::lock_guard<std::mutex> lock(audio_queue_mutex_);
+        audio_decode_queue_.clear();
+        audio_playback_queue_.clear();
+        audio_queue_cv_.notify_all();
+    }
+    ESP_LOGI(TAG, "Music stream suspended free_internal=%u free_psram=%u",
+             static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)),
+             static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_SPIRAM)));
+    return true;
+}
+
+bool AudioService::ResumeSuspendedMusicForAssistant() {
+    if (!music_suspended_for_assistant_) {
+        assistant_audio_active_ = false;
+        return false;
+    }
+
+    auto url = suspended_music_url_;
+    music_suspended_for_assistant_ = false;
+    suspended_music_url_.clear();
+    assistant_audio_active_ = false;
+    if (url.empty()) {
+        return false;
+    }
+
+    ESP_LOGI(TAG, "Resume suspended music stream offset=%u",
+             static_cast<unsigned>(music_resume_offset_.load()));
+    StopMusicPlayback();
+    ResetDecoder();
+    music_url_ = url;
+    music_stop_requested_ = false;
+    music_paused_ = false;
+    music_playing_ = true;
+    ESP_LOGI(TAG, "Create music playback task free_internal=%u free_psram=%u",
+             static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)),
+             static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_SPIRAM)));
+    constexpr uint32_t kMusicTaskStackSize = 8 * 1024;
+    if (xTaskCreate([](void* arg) {
+            auto* audio_service = static_cast<AudioService*>(arg);
+            audio_service->MusicPlaybackTask();
+            audio_service->music_playback_task_handle_ = nullptr;
+            vTaskDelete(NULL);
+        }, "music_playback", kMusicTaskStackSize, this, 5, &music_playback_task_handle_) != pdPASS) {
+        music_playback_task_handle_ = nullptr;
+        music_playing_ = false;
+        music_paused_ = false;
+        ESP_LOGE(TAG, "Failed to create music playback task free_internal=%u free_psram=%u",
+                 static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)),
+                 static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_SPIRAM)));
+        return false;
+    }
+    return true;
+}
+
 void AudioService::StopMusicPlayback() {
     if (music_playback_task_handle_ == nullptr) {
         music_playing_ = false;
@@ -857,14 +935,25 @@ void AudioService::MusicPlaybackTask() {
         ~MusicPlaybackGuard() {
             service->music_playing_ = false;
             service->music_paused_ = false;
-            service->assistant_audio_active_ = false;
+            if (!service->music_suspended_for_assistant_) {
+                service->assistant_audio_active_ = false;
+            }
             service->music_stop_requested_ = false;
             Board::GetInstance().SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
         }
     } guard{this};
 
     auto url = music_url_;
-    ESP_LOGI(TAG, "Start music playback: %s", url.c_str());
+    constexpr size_t kResumePrerollBytes = 64 * 1024;
+    size_t requested_resume_offset = music_resume_offset_.load();
+    size_t request_offset = requested_resume_offset > kResumePrerollBytes
+        ? requested_resume_offset - kResumePrerollBytes
+        : 0;
+    music_stream_offset_ = request_offset;
+    ESP_LOGI(TAG, "Start music playback offset=%u request_offset=%u: %s",
+             static_cast<unsigned>(requested_resume_offset),
+             static_cast<unsigned>(request_offset),
+             url.c_str());
     Board::GetInstance().SetPowerSaveLevel(PowerSaveLevel::PERFORMANCE);
 
     if (!codec_->output_enabled()) {
@@ -888,13 +977,24 @@ void AudioService::MusicPlaybackTask() {
         http->SetHeader("User-Agent", "Mozilla/5.0");
         http->SetHeader("Referer", "https://y.qq.com");
         http->SetHeader("Accept", "*/*");
-        http->SetHeader("Range", "bytes=0-");
+        std::string range = "bytes=" + std::to_string(request_offset) + "-";
+        http->SetHeader("Range", range);
         if (!http->Open("GET", current_url)) {
             ESP_LOGE(TAG, "Failed to open music url, err=%d", http->GetLastError());
             return;
         }
 
         auto status_code = http->GetStatusCode();
+        if (status_code == 416 && request_offset > 0) {
+            ESP_LOGW(TAG, "Music range offset rejected, retry from start");
+            http->Close();
+            request_offset = 0;
+            requested_resume_offset = 0;
+            music_resume_offset_ = 0;
+            music_stream_offset_ = 0;
+            current_url = url;
+            continue;
+        }
         if (status_code >= 300 && status_code < 400) {
             auto location = http->GetResponseHeader("Location");
             http->Close();
@@ -909,6 +1009,13 @@ void AudioService::MusicPlaybackTask() {
         if (status_code < 200 || status_code >= 300) {
             ESP_LOGE(TAG, "Music url returned status %d", status_code);
             return;
+        }
+        if (request_offset > 0 && status_code != 206) {
+            ESP_LOGW(TAG, "Music server ignored range request, restart from beginning status=%d", status_code);
+            request_offset = 0;
+            requested_resume_offset = 0;
+            music_resume_offset_ = 0;
+            music_stream_offset_ = 0;
         }
         break;
     }
@@ -933,7 +1040,7 @@ void AudioService::MusicPlaybackTask() {
         return;
     }
 
-    constexpr int kReadSize = 4096;
+    constexpr int kReadSize = 8192;
     int out_size = 8192;
     auto* in_buf = static_cast<uint8_t*>(MusicMalloc(kReadSize));
     auto* out_buf = static_cast<uint8_t*>(MusicMalloc(out_size));
@@ -955,6 +1062,26 @@ void AudioService::MusicPlaybackTask() {
     bool first_pcm_logged = false;
     std::vector<int16_t> mono_pcm;
     std::vector<int16_t> output_pcm;
+    bool released_pause_buffers = false;
+
+    auto wait_if_music_suspended = [this, &mono_pcm, &output_pcm, &released_pause_buffers]() {
+        if (!(music_paused_ || assistant_audio_active_)) {
+            released_pause_buffers = false;
+            return;
+        }
+        if (!released_pause_buffers) {
+            std::vector<int16_t>().swap(mono_pcm);
+            std::vector<int16_t>().swap(output_pcm);
+            released_pause_buffers = true;
+            ESP_LOGI(TAG, "Release music PCM buffers while suspended free_internal=%u free_psram=%u",
+                     static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)),
+                     static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_SPIRAM)));
+        }
+        while ((music_paused_ || assistant_audio_active_) && !music_stop_requested_) {
+            vTaskDelay(pdMS_TO_TICKS(50));
+        }
+        released_pause_buffers = false;
+    };
 
     auto write_music_pcm = [this, &first_pcm_logged](std::vector<int16_t>& pcm) {
         if (pcm.empty()) {
@@ -968,6 +1095,7 @@ void AudioService::MusicPlaybackTask() {
             codec_->EnableOutput(true);
         }
         if (!first_pcm_logged) {
+            Board::GetInstance().SetPowerSaveLevel(PowerSaveLevel::PERFORMANCE);
             ESP_LOGI(TAG, "Music first PCM write samples=%u volume=%d output_enabled=%d",
                      static_cast<unsigned>(pcm.size()), codec_->output_volume(), codec_->output_enabled());
             first_pcm_logged = true;
@@ -977,9 +1105,7 @@ void AudioService::MusicPlaybackTask() {
     };
 
     while (!music_stop_requested_) {
-        while ((music_paused_ || assistant_audio_active_) && !music_stop_requested_) {
-            vTaskDelay(pdMS_TO_TICKS(50));
-        }
+        wait_if_music_suspended();
         if (music_stop_requested_) {
             break;
         }
@@ -992,6 +1118,7 @@ void AudioService::MusicPlaybackTask() {
         if (read_len == 0) {
             break;
         }
+        music_stream_offset_ = music_stream_offset_.load() + static_cast<size_t>(read_len);
 
         esp_audio_simple_dec_raw_t raw = {
             .buffer = in_buf,
@@ -1002,9 +1129,7 @@ void AudioService::MusicPlaybackTask() {
         };
 
         while (raw.len > 0 && !music_stop_requested_) {
-            while ((music_paused_ || assistant_audio_active_) && !music_stop_requested_) {
-                vTaskDelay(pdMS_TO_TICKS(50));
-            }
+            wait_if_music_suspended();
             if (music_stop_requested_) {
                 break;
             }
@@ -1099,6 +1224,10 @@ void AudioService::MusicPlaybackTask() {
     esp_audio_simple_dec_unregister_default();
     esp_audio_dec_unregister_default();
     http->Close();
+    ESP_LOGI(TAG, "Music playback task stack high watermark=%u free_internal=%u free_psram=%u",
+             static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)),
+             static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)),
+             static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_SPIRAM)));
     ESP_LOGI(TAG, "Music playback stopped");
 }
 

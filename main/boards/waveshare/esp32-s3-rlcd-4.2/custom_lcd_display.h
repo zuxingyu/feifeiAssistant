@@ -164,6 +164,7 @@ private:
     lv_obj_t* schedule_temp_label_ = nullptr;
     lv_obj_t* schedule_humidity_label_ = nullptr;
     lv_obj_t* schedule_datetime_label_ = nullptr;
+    lv_obj_t* schedule_wifi_icon_label_ = nullptr;
     lv_obj_t* schedule_battery_label_ = nullptr;
     lv_obj_t* schedule_single_label_ = nullptr;
     lv_obj_t* schedule_dual_label_ = nullptr;

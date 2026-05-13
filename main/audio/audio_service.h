@@ -137,6 +137,8 @@ public:
     bool ResumeMusicPlayback();
     void StopMusicPlayback();
     void SetAssistantAudioActive(bool active);
+    bool SuspendMusicForAssistant();
+    bool ResumeSuspendedMusicForAssistant();
     bool IsMusicPlaying() const { return music_playing_; }
     bool IsMusicPaused() const { return music_paused_; }
     bool ReadAudioData(std::vector<int16_t>& data, int sample_rate, int samples);
@@ -195,10 +197,14 @@ private:
     std::chrono::steady_clock::time_point last_output_time_;
     TaskHandle_t music_playback_task_handle_ = nullptr;
     std::string music_url_;
+    std::string suspended_music_url_;
+    std::atomic<size_t> music_resume_offset_{0};
+    std::atomic<size_t> music_stream_offset_{0};
     std::atomic<bool> music_stop_requested_{false};
     std::atomic<bool> music_playing_{false};
     std::atomic<bool> music_paused_{false};
     std::atomic<bool> assistant_audio_active_{false};
+    std::atomic<bool> music_suspended_for_assistant_{false};
 
     void AudioInputTask();
     void AudioOutputTask();

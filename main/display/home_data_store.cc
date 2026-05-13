@@ -294,6 +294,11 @@ bool HomeDataStore::IsDualWeek(time_t target_date) const {
         return false;
     }
 
+    struct tm normalized_start_tm = {};
+    localtime_r(&start_time, &normalized_start_tm);
+    int days_from_monday = normalized_start_tm.tm_wday == 0 ? 6 : normalized_start_tm.tm_wday - 1;
+    start_time -= days_from_monday * 86400;
+
     // 获取目标日期的 0 点时间
     struct tm target_tm = {};
     localtime_r(&target_date, &target_tm);

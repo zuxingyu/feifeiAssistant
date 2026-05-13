@@ -59,16 +59,18 @@ bool Application::SetDeviceState(DeviceState state) {
 }
 
 void Application::PauseMusicForAssistant() {
-    audio_service_.SetAssistantAudioActive(true);
     if (music_paused_for_assistant_) {
+        audio_service_.SetAssistantAudioActive(true);
         return;
     }
-    if (audio_service_.PauseMusicPlayback()) {
+    if (audio_service_.SuspendMusicForAssistant()) {
         music_paused_for_assistant_ = true;
         auto display = Board::GetInstance().GetDisplay();
         if (display != nullptr) {
             display->SetChatMessage("music", "{\"type\":\"music\",\"state\":\"已暂停\"}");
         }
+    } else {
+        audio_service_.SetAssistantAudioActive(true);
     }
 }
 
@@ -78,13 +80,14 @@ void Application::ResumeMusicAfterAssistant() {
         return;
     }
     music_paused_for_assistant_ = false;
-    if (audio_service_.ResumeMusicPlayback()) {
+    if (audio_service_.ResumeSuspendedMusicForAssistant()) {
         auto display = Board::GetInstance().GetDisplay();
         if (display != nullptr) {
             display->SetChatMessage("music", "{\"type\":\"music\",\"state\":\"播放中\"}");
         }
+    } else {
+        audio_service_.SetAssistantAudioActive(false);
     }
-    audio_service_.SetAssistantAudioActive(false);
 }
 
 void Application::EnterMusicPlaybackMode() {
@@ -551,7 +554,9 @@ void Application::InitializeProtocol() {
     });
     
     protocol_->OnAudioChannelClosed([this, &board]() {
-        board.SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
+        board.SetPowerSaveLevel(audio_service_.IsMusicPlaying()
+            ? PowerSaveLevel::PERFORMANCE
+            : PowerSaveLevel::LOW_POWER);
         Schedule([this]() {
             auto display = Board::GetInstance().GetDisplay();
             display->SetChatMessage("system", "");

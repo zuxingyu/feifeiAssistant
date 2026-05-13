@@ -1325,10 +1325,10 @@ void CustomLcdDisplay::CreateSchedulePage(lv_obj_t* screen) {
         &schedule_temp_label_,
         &schedule_humidity_label_,
         &schedule_datetime_label_,
-        nullptr,
+        &schedule_wifi_icon_label_,
         &schedule_battery_label_,
         true,
-        false,
+        true,
         true);
 
     auto* main_area = lv_obj_create(schedule_page_);
