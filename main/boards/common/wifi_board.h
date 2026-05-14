@@ -5,10 +5,12 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/event_groups.h>
 #include <esp_timer.h>
+#include <esp_http_server.h>
 
 class WifiBoard : public Board {
 protected:
     esp_timer_handle_t connect_timer_ = nullptr;
+    httpd_handle_t management_server_ = nullptr;
     bool in_config_mode_ = false;
     NetworkEventCallback network_event_callback_ = nullptr;
 
@@ -30,6 +32,13 @@ protected:
      * 进入 Wi-Fi 配网模式
      */
     void StartWifiConfigMode();
+
+    /**
+     * 启动/停止正常联网状态下的本地管理页面。
+     * 目前用于浏览器维护课程表，不切换到配网 AP。
+     */
+    void StartManagementServer();
+    void StopManagementServer();
 
     /**
      * Wi-Fi 连接超时回调

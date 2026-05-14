@@ -4,12 +4,14 @@
 #include "application.h"
 #include "system_info.h"
 #include "settings.h"
+#include "setup_service.h"
 #include "assets/lang_config.h"
 
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <esp_network.h>
 #include <esp_log.h>
+#include <esp_http_server.h>
 #include <utility>
 
 #include <font_awesome.h>
@@ -39,6 +41,7 @@ WifiBoard::WifiBoard() {
 }
 
 WifiBoard::~WifiBoard() {
+    StopManagementServer();
     if (connect_timer_) {
         esp_timer_stop(connect_timer_);
         esp_timer_delete(connect_timer_);
@@ -114,6 +117,7 @@ void WifiBoard::OnNetworkEvent(NetworkEvent event, const std::string& data) {
 #endif
             in_config_mode_ = false;
             ESP_LOGI(TAG, "Connected to WiFi: %s", data.c_str());
+            StartManagementServer();
             break;
         case NetworkEvent::Scanning:
             ESP_LOGI(TAG, "WiFi scanning");
@@ -123,10 +127,12 @@ void WifiBoard::OnNetworkEvent(NetworkEvent event, const std::string& data) {
             break;
         case NetworkEvent::Disconnected:
             ESP_LOGW(TAG, "WiFi disconnected");
+            StopManagementServer();
             break;
         case NetworkEvent::WifiConfigModeEnter:
             ESP_LOGI(TAG, "WiFi config mode entered");
             in_config_mode_ = true;
+            StopManagementServer();
             break;
         case NetworkEvent::WifiConfigModeExit:
             ESP_LOGI(TAG, "WiFi config mode exited");
@@ -158,6 +164,7 @@ void WifiBoard::OnWifiConnectTimeout(void* arg) {
 
 void WifiBoard::StartWifiConfigMode() {
     in_config_mode_ = true;
+    StopManagementServer();
     // 切换到 Wi-Fi 配网状态。
     Application::GetInstance().SetDeviceState(kDeviceStateWifiConfiguring);
 #ifdef CONFIG_USE_HOTSPOT_WIFI_PROVISIONING
@@ -235,6 +242,52 @@ void WifiBoard::EnterWifiConfigMode() {
     WifiManager::GetInstance().StopStation();
 
     StartWifiConfigMode();
+}
+
+void WifiBoard::StartManagementServer() {
+    if (management_server_ != nullptr || WifiManager::GetInstance().IsConfigMode()) {
+        return;
+    }
+
+    httpd_config_t config = HTTPD_DEFAULT_CONFIG();
+    config.max_uri_handlers = 12;
+    config.stack_size = 8192;
+    config.recv_wait_timeout = 15;
+    config.send_wait_timeout = 15;
+
+    esp_err_t err = httpd_start(&management_server_, &config);
+    if (err != ESP_OK) {
+        management_server_ = nullptr;
+        ESP_LOGW(TAG, "Failed to start management web server: %s", esp_err_to_name(err));
+        return;
+    }
+
+    httpd_uri_t root_page = {
+        .uri = "/",
+        .method = HTTP_GET,
+        .handler = [](httpd_req_t* req) -> esp_err_t {
+            httpd_resp_set_status(req, "302 Found");
+            httpd_resp_set_hdr(req, "Location", "/schedule.html?standalone=1");
+            httpd_resp_send(req, nullptr, 0);
+            return ESP_OK;
+        },
+        .user_ctx = nullptr
+    };
+    httpd_register_uri_handler(management_server_, &root_page);
+
+    SetupService::RegisterRoutes(management_server_);
+
+    std::string ip = WifiManager::GetInstance().GetIpAddress();
+    ESP_LOGI(TAG, "Management page ready: http://%s/schedule.html?standalone=1", ip.c_str());
+}
+
+void WifiBoard::StopManagementServer() {
+    if (management_server_ == nullptr) {
+        return;
+    }
+    httpd_stop(management_server_);
+    management_server_ = nullptr;
+    ESP_LOGI(TAG, "Management web server stopped");
 }
 
 bool WifiBoard::IsInWifiConfigMode() const {

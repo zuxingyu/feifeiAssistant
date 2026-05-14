@@ -184,6 +184,9 @@ bool HomeDataStore::LoadScheduleFromNvs() {
     std::string schedule_json = settings.GetString("schedule");
     if (schedule_json.empty()) {
         ESP_LOGW(TAG, "NVS 中未找到 schedule 键（可能还未配置课程表）");
+        schedule_json_cache_.clear();
+        schedule_parsed_ = false;
+        data_.has_schedule = false;
         return false;
     }
 
@@ -254,6 +257,7 @@ bool HomeDataStore::LoadScheduleFromNvs() {
 
     cJSON_Delete(root);
 
+    schedule_json_cache_ = schedule_json;
     schedule_parsed_ = true;
     ESP_LOGI(TAG, "课程表解析成功（单周 + 双周）");
     return true;
@@ -413,6 +417,13 @@ bool HomeDataStore::IsDualWeek(time_t target_date) const {
 // ============================================================================
 
 const HomeData& HomeDataStore::UpdateSchedule() {
+    Settings settings("setup");
+    std::string current_schedule_json = settings.GetString("schedule");
+    if (!current_schedule_json.empty() && current_schedule_json != schedule_json_cache_) {
+        ESP_LOGI(TAG, "检测到课程表配置变更，重新加载");
+        data_.has_schedule = LoadScheduleFromNvs();
+    }
+
     if (!schedule_parsed_) {
         // 课程表未加载，返回空数据
         ESP_LOGD(TAG, "课程表未加载，跳过更新");

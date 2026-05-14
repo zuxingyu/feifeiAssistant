@@ -284,6 +284,7 @@ private:
     DaySchedule single_week_[5];     ///< 单周课程（周一到周五）
     DaySchedule dual_week_[5];       ///< 双周课程（周一到周五）
     bool        schedule_parsed_;    ///< 课程表是否已成功解析
+    std::string schedule_json_cache_; ///< 上次成功加载的课程表原始 JSON，用于检测浏览器修改
 
     // 对外输出的首页数据
     HomeData data_;

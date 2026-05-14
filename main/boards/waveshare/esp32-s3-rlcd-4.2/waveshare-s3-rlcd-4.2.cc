@@ -16,6 +16,7 @@
 #include "button.h"
 #include "config.h"
 #include "codecs/box_audio_codec.h"
+#include "wifi_manager.h"
 #include "wifi_station.h"
 #include "mcp_server.h"
 #include "settings.h"
@@ -800,6 +801,19 @@ private:
             EnterWifiConfigMode();
             return true;
         });
+
+        mcp_server.AddTool("self.network.get_ip",
+            "获取设备当前 WiFi IP 地址和浏览器课程表配置地址。"
+            "当用户询问当前 IP、设备地址、浏览器访问地址、课程表配置地址时使用这个工具。",
+            PropertyList(),
+            [](const PropertyList&) -> ReturnValue {
+                auto& wifi = WifiManager::GetInstance();
+                std::string ip = wifi.GetIpAddress();
+                if (ip.empty() || ip == "0.0.0.0") {
+                    return "设备当前还没有获取到 WiFi IP 地址";
+                }
+                return "当前设备 IP 是 " + ip + "，课程表配置地址是 http://" + ip + "/schedule.html?standalone=1";
+            });
 
         mcp_server.AddTool("self.music.play_song",
             "Play a song on the device. Use this as the primary and only tool when the user asks to play music. "

@@ -5,6 +5,8 @@
 #include <esp_log.h>
 #include <cJSON.h>
 #include <cstring>
+#include <cstdio>
+#include <cstdlib>
 
 static const char* TAG = "SetupService";
 
@@ -37,6 +39,123 @@ static void register_route(httpd_handle_t server, const httpd_uri_t* uri, const 
     } else {
         ESP_LOGE(TAG, "Failed to register route %s: %s", name, esp_err_to_name(err));
     }
+}
+
+static char* read_request_body(httpd_req_t* req, size_t max_len) {
+    size_t total_len = req->content_len;
+    if (total_len == 0 || total_len > max_len) {
+        ESP_LOGW(TAG, "Invalid request body length: %u", (unsigned)total_len);
+        return nullptr;
+    }
+
+    char* buf = static_cast<char*>(malloc(total_len + 1));
+    if (buf == nullptr) {
+        ESP_LOGE(TAG, "Failed to allocate request body buffer, len=%u", (unsigned)total_len);
+        return nullptr;
+    }
+
+    size_t received = 0;
+    while (received < total_len) {
+        int ret = httpd_req_recv(req, buf + received, total_len - received);
+        if (ret <= 0) {
+            free(buf);
+            ESP_LOGW(TAG, "Failed to receive request body, ret=%d, received=%u/%u",
+                     ret, (unsigned)received, (unsigned)total_len);
+            return nullptr;
+        }
+        received += ret;
+    }
+    buf[received] = '\0';
+    return buf;
+}
+
+static constexpr const char* kScheduleDayKeys[] = {"mon", "tue", "wed", "thu", "fri"};
+
+static bool has_editor_day_arrays(cJSON* src) {
+    if (!cJSON_IsObject(src)) {
+        return false;
+    }
+    for (int d = 0; d < 5; ++d) {
+        char key[8];
+        snprintf(key, sizeof(key), "day%d", d);
+        if (cJSON_IsArray(cJSON_GetObjectItem(src, key))) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static cJSON* schedule_to_storage_format(cJSON* src) {
+    cJSON* out = cJSON_CreateObject();
+    if (!cJSON_IsObject(src)) {
+        return out;
+    }
+
+    if (!has_editor_day_arrays(src)) {
+        cJSON* item = nullptr;
+        cJSON_ArrayForEach(item, src) {
+            if (cJSON_IsString(item) && item->string && item->valuestring && item->valuestring[0] != '\0') {
+                cJSON_AddStringToObject(out, item->string, item->valuestring);
+            }
+        }
+        return out;
+    }
+
+    for (int d = 0; d < 5; ++d) {
+        char day_key[8];
+        snprintf(day_key, sizeof(day_key), "day%d", d);
+        cJSON* day = cJSON_GetObjectItem(src, day_key);
+        if (!cJSON_IsArray(day)) {
+            continue;
+        }
+        for (int p = 0; p < 8; ++p) {
+            cJSON* item = cJSON_GetArrayItem(day, p);
+            if (!cJSON_IsString(item) || item->valuestring == nullptr || item->valuestring[0] == '\0') {
+                continue;
+            }
+            char course_key[16];
+            snprintf(course_key, sizeof(course_key), "%s_%d", kScheduleDayKeys[d], p + 1);
+            cJSON_AddStringToObject(out, course_key, item->valuestring);
+        }
+    }
+    return out;
+}
+
+static cJSON* schedule_to_editor_format(cJSON* src) {
+    cJSON* out = cJSON_CreateObject();
+    for (int d = 0; d < 5; ++d) {
+        cJSON* day = cJSON_CreateArray();
+        for (int p = 0; p < 8; ++p) {
+            cJSON_AddItemToArray(day, cJSON_CreateString(""));
+        }
+        char day_key[8];
+        snprintf(day_key, sizeof(day_key), "day%d", d);
+        cJSON_AddItemToObject(out, day_key, day);
+    }
+
+    if (!cJSON_IsObject(src)) {
+        return out;
+    }
+
+    if (has_editor_day_arrays(src)) {
+        cJSON_Delete(out);
+        return cJSON_Duplicate(src, 1);
+    }
+
+    for (int d = 0; d < 5; ++d) {
+        char day_key[8];
+        snprintf(day_key, sizeof(day_key), "day%d", d);
+        cJSON* day = cJSON_GetObjectItem(out, day_key);
+        for (int p = 0; p < 8; ++p) {
+            char course_key[16];
+            snprintf(course_key, sizeof(course_key), "%s_%d", kScheduleDayKeys[d], p + 1);
+            cJSON* item = cJSON_GetObjectItem(src, course_key);
+            if (cJSON_IsString(item) && item->valuestring) {
+                cJSON_ReplaceItemInArray(day, p, cJSON_CreateString(item->valuestring));
+            }
+        }
+    }
+    return out;
 }
 
 // ========== /api/config/status ==========
@@ -73,9 +192,9 @@ static esp_err_t api_config_status_handler(httpd_req_t* req) {
             cJSON* sched = cJSON_GetObjectItem(schedule_root, "schedule");
             if (sched) {
                 cJSON* single = cJSON_GetObjectItem(sched, "single");
-                if (single) cJSON_AddItemToObject(root, "schedule_single", cJSON_Duplicate(single, 1));
+                if (single) cJSON_AddItemToObject(root, "schedule_single", schedule_to_editor_format(single));
                 cJSON* dual = cJSON_GetObjectItem(sched, "dual");
-                if (dual) cJSON_AddItemToObject(root, "schedule_double", cJSON_Duplicate(dual, 1));
+                if (dual) cJSON_AddItemToObject(root, "schedule_double", schedule_to_editor_format(dual));
             }
             cJSON_Delete(schedule_root);
         }
@@ -91,15 +210,14 @@ static esp_err_t api_config_status_handler(httpd_req_t* req) {
 // ========== POST /api/schedule ==========
 
 static esp_err_t api_schedule_handler(httpd_req_t* req) {
-    char buf[4096] = {};
-    int ret = httpd_req_recv(req, buf, sizeof(buf) - 1);
-    if (ret <= 0) {
+    char* buf = read_request_body(req, 8192);
+    if (buf == nullptr) {
         send_json(req, "{\"success\":false,\"error\":\"empty request\"}");
         return ESP_OK;
     }
-    buf[ret] = '\0';
 
     cJSON* json = cJSON_Parse(buf);
+    free(buf);
     if (!json) {
         send_json(req, "{\"success\":false,\"error\":\"invalid JSON\"}");
         return ESP_OK;
@@ -125,14 +243,14 @@ static esp_err_t api_schedule_handler(httpd_req_t* req) {
     cJSON* inner_schedule = cJSON_CreateObject();
     cJSON* sched_single = cJSON_GetObjectItem(json, "schedule_single");
     if (sched_single) {
-        cJSON_AddItemToObject(inner_schedule, "single", cJSON_Duplicate(sched_single, 1));
+        cJSON_AddItemToObject(inner_schedule, "single", schedule_to_storage_format(sched_single));
     }
     cJSON* sched_double = cJSON_GetObjectItem(json, "schedule_double");
     if (sched_double) {
-        cJSON_AddItemToObject(inner_schedule, "dual", cJSON_Duplicate(sched_double, 1));
+        cJSON_AddItemToObject(inner_schedule, "dual", schedule_to_storage_format(sched_double));
     } else if (sched_single) {
         // If no double, use single as fallback
-        cJSON_AddItemToObject(inner_schedule, "dual", cJSON_Duplicate(sched_single, 1));
+        cJSON_AddItemToObject(inner_schedule, "dual", schedule_to_storage_format(sched_single));
     }
     cJSON_AddItemToObject(schedule_obj, "schedule", inner_schedule);
 
@@ -152,15 +270,14 @@ static esp_err_t api_schedule_handler(httpd_req_t* req) {
 // ========== POST /api/weather ==========
 
 static esp_err_t api_weather_handler(httpd_req_t* req) {
-    char buf[1024] = {};
-    int ret = httpd_req_recv(req, buf, sizeof(buf) - 1);
-    if (ret <= 0) {
+    char* buf = read_request_body(req, 2048);
+    if (buf == nullptr) {
         send_json(req, "{\"success\":false,\"error\":\"empty request\"}");
         return ESP_OK;
     }
-    buf[ret] = '\0';
 
     cJSON* json = cJSON_Parse(buf);
+    free(buf);
     if (!json) {
         send_json(req, "{\"success\":false,\"error\":\"invalid JSON\"}");
         return ESP_OK;

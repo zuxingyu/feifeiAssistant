@@ -37,8 +37,8 @@
 .btn-next:disabled{opacity:.5;cursor:not-allowed}
 </style></head>
 <body><div class="container">
-<div class="header"><h1>📅 课程表配置</h1><p>设置 · 第2步</p></div>
-<div class="step-bar">
+<div class="header"><h1>📅 课程表配置</h1><p id="subtitle">设置 · 第2步</p></div>
+<div class="step-bar" id="stepBar">
 <div class="step done"><div class="step-num">✓</div></div><div class="step-connector"></div>
 <div class="step active"><div class="step-num">2</div><span>课程</span></div><div class="step-connector"></div>
 <div class="step"><div class="step-num">3</div><span>天气</span></div><div class="step-connector"></div>
@@ -50,10 +50,12 @@
 <div id="editor"></div>
 <div class="copy-row"><button class="copy-btn" onclick="copySD()">📋 单周→双周</button></div>
 <div class="error" id="err"></div>
-<div class="btn-area"><button class="btn btn-prev" onclick="location.href='/'">← 上一步</button><button class="btn btn-next" id="saveBtn" onclick="save()">下一步 →</button></div>
+<div class="btn-area"><button class="btn btn-prev" id="prevBtn" onclick="location.href='/'">← 上一步</button><button class="btn btn-next" id="saveBtn" onclick="save()">下一步 →</button></div>
 </div></div>
 <script>
 var cw='single',sd={single:null,double:null};
+var standalone=location.search.indexOf('standalone=1')>=0||location.search.indexOf('mode=edit')>=0;
+if(standalone){document.getElementById('subtitle').textContent='课程表维护';document.getElementById('stepBar').style.display='none';document.getElementById('prevBtn').style.display='none';document.getElementById('saveBtn').textContent='保存课程表'}
 function me(){var s={};for(var d=0;d<5;d++){s['day'+d]=['','','','','','','','']}return s}
 function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
 function render(){
@@ -66,8 +68,9 @@ h+='</tbody></table>';document.getElementById('editor').innerHTML=h}
 function col(){var s={};for(var d=0;d<5;d++){s['day'+d]=[];for(var p=0;p<8;p++){var el=document.getElementById('s_'+cw+'_'+d+'_'+p);s['day'+d].push(el?el.value.trim():'')}}sd[cw]=s}
 function swW(w){col();cw=w;document.querySelectorAll('.week-btn').forEach(function(b){b.classList.remove('active')});if(w==='single')document.querySelectorAll('.week-btn')[0].classList.add('active');else document.querySelectorAll('.week-btn')[1].classList.add('active');render()}
 function copySD(){col();if(!sd.single){alert('请先填写单周课程');return}sd.double=JSON.parse(JSON.stringify(sd.single));swW('double')}
+function setMsg(t,ok){var e=document.getElementById('err');e.textContent=t;e.style.color=ok?'#11998e':'#e74c3c';e.style.display='block'}
 function save(){col();document.getElementById('err').style.display='none';document.getElementById('saveBtn').disabled=true;document.getElementById('saveBtn').textContent='保存中...';
 var d={semester_start:document.getElementById('semester_start').value,semester_end:document.getElementById('semester_end').value,schedule_single:sd.single||me(),schedule_double:sd.double||sd.single||me()};
-fetch('/api/schedule',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)}).then(function(r){return r.json()}).then(function(j){if(j.success)location.href='/weather.html';else{var e=document.getElementById('err');e.textContent='保存失败';e.style.display='block';document.getElementById('saveBtn').disabled=false;document.getElementById('saveBtn').textContent='下一步 →'}}).catch(function(){var e=document.getElementById('err');e.textContent='网络错误';e.style.display='block';document.getElementById('saveBtn').disabled=false;document.getElementById('saveBtn').textContent='下一步 →'})}
+fetch('/api/schedule',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)}).then(function(r){return r.json()}).then(function(j){if(j.success){if(standalone){setMsg('保存成功，屏幕会自动读取新的课程表',true);document.getElementById('saveBtn').disabled=false;document.getElementById('saveBtn').textContent='保存课程表'}else location.href='/weather.html'}else{setMsg('保存失败',false);document.getElementById('saveBtn').disabled=false;document.getElementById('saveBtn').textContent=standalone?'保存课程表':'下一步 →'}}).catch(function(){setMsg('网络错误',false);document.getElementById('saveBtn').disabled=false;document.getElementById('saveBtn').textContent=standalone?'保存课程表':'下一步 →'})}
 fetch('/api/config/status').then(function(r){return r.json()}).then(function(d){if(d.semester_start)document.getElementById('semester_start').value=d.semester_start;if(d.semester_end)document.getElementById('semester_end').value=d.semester_end;if(d.schedule_single)sd.single=d.schedule_single;if(d.schedule_double)sd.double=d.schedule_double;render()}).catch(function(){render()});
 </script></body></html>
