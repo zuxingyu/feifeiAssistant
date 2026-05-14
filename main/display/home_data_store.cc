@@ -27,6 +27,11 @@
 
 static const char* TAG = "HomeDataStore";
 static const char* WEATHER_LAST_TODAY_KEY = "w_last";
+static const char* WEATHER_CACHE_TIME_KEY = "w_cache_time";
+static const char* WEATHER_CACHE_CITY_KEY = "w_cache_city";
+static const char* WEATHER_CACHE_DETAIL_KEYS[] = {
+    "w_cache_d0", "w_cache_d1", "w_cache_d2", "w_cache_d3"
+};
 
 /**
  * @brief URL 编码（百分号编码）
@@ -163,6 +168,9 @@ bool HomeDataStore::LoadFromNvs() {
         cached_yesterday.date == GetDateOffsetString(-1)) {
         data_.weather_detail[0] = cached_yesterday;
         ESP_LOGI(TAG, "已从本地缓存恢复昨日天气: %s", cached_yesterday.date.c_str());
+    }
+    if (weather_ok) {
+        LoadWeatherCacheFromNvs();
     }
 
     ESP_LOGI(TAG, "NVS 加载完成: 课程表=%s, 天气配置=%s",
@@ -554,6 +562,48 @@ bool HomeDataStore::LoadWeatherConfigFromNvs() {
     return true;
 }
 
+bool HomeDataStore::LoadWeatherCacheFromNvs() {
+    Settings settings("setup");
+    bool has_cache = false;
+
+    data_.weather_city = settings.GetString(WEATHER_CACHE_CITY_KEY);
+    data_.last_weather_update = static_cast<time_t>(settings.GetInt(WEATHER_CACHE_TIME_KEY, 0));
+
+    for (int i = 0; i < 4; ++i) {
+        WeatherDay cached_day;
+        if (ParseWeatherDayJson(settings.GetString(WEATHER_CACHE_DETAIL_KEYS[i]), cached_day)) {
+            data_.weather_detail[i] = cached_day;
+            has_cache = true;
+        }
+    }
+
+    for (int i = 0; i < 3; ++i) {
+        data_.weather[i] = data_.weather_detail[i + 1];
+    }
+
+    if (data_.weather_city.empty()) {
+        data_.weather_city = weather_city_;
+    }
+
+    if (has_cache) {
+        weather_loaded_from_cache_ = true;
+        ESP_LOGI(TAG, "已从本地缓存恢复天气数据，last_update=%ld", (long)data_.last_weather_update);
+    }
+    return has_cache;
+}
+
+void HomeDataStore::SaveWeatherCacheToNvs() {
+    Settings settings("setup", true);
+    settings.SetInt(WEATHER_CACHE_TIME_KEY, static_cast<int>(data_.last_weather_update));
+    settings.SetString(WEATHER_CACHE_CITY_KEY, data_.weather_city);
+
+    for (int i = 0; i < 4; ++i) {
+        if (!data_.weather_detail[i].date.empty()) {
+            settings.SetString(WEATHER_CACHE_DETAIL_KEYS[i], SerializeWeatherDay(data_.weather_detail[i]));
+        }
+    }
+}
+
 // ============================================================================
 // 天气 API 调用
 // ============================================================================
@@ -570,17 +620,20 @@ bool HomeDataStore::RefreshWeather() {
     time_t now = time(nullptr);
     ESP_LOGI(TAG, "Current time: %ld, last update: %ld", (long)now, (long)data_.last_weather_update);
     
-    if (data_.last_weather_update > 0 &&
+    if (!weather_loaded_from_cache_ &&
+        data_.last_weather_update > 0 &&
         (now - data_.last_weather_update) < WEATHER_CACHE_SECONDS) {
         ESP_LOGI(TAG, "天气数据仍在缓存有效期内（%ld 秒前更新）",
                  (long)(now - data_.last_weather_update));
         return true;
     }
 
+    weather_loaded_from_cache_ = false;
     ESP_LOGI(TAG, "开始获取天气数据...");
     bool ok = FetchWeatherFromApi();
     if (ok) {
         data_.last_weather_update = now;
+        SaveWeatherCacheToNvs();
         ESP_LOGI(TAG, "天气数据更新成功");
     } else {
         ESP_LOGW(TAG, "天气数据获取失败");

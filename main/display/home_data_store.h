@@ -235,6 +235,8 @@ private:
      * @return false 关键键缺失
      */
     bool LoadWeatherConfigFromNvs();
+    bool LoadWeatherCacheFromNvs();
+    void SaveWeatherCacheToNvs();
 
     // ========== 天气 HTTP 请求相关 ==========
 
@@ -287,6 +289,7 @@ private:
     DaySchedule dual_week_[5];       ///< 双周课程（周一到周五）
     bool        schedule_parsed_;    ///< 课程表是否已成功解析
     std::string schedule_json_cache_; ///< 上次成功加载的课程表原始 JSON，用于检测浏览器修改
+    bool        weather_loaded_from_cache_ = false; ///< 本次启动是否已先显示本地天气缓存
 
     // 对外输出的首页数据
     HomeData data_;
