@@ -7,7 +7,7 @@
  * - cJSON 解析课程 JSON
  * - 单双周判断（基于学期起始日期）
  * - 心和天气 HTTP API 调用与 JSON 响应解析
- * - 天气数据 30 分钟缓存策略
+ * - 天气数据 1 小时缓存策略
  */
 
 #include "home_data_store.h"
@@ -530,7 +530,7 @@ bool HomeDataStore::RefreshWeather() {
         return false;
     }
 
-    // 检查缓存有效期（30 分钟内不重复请求）
+    // 检查缓存有效期（1 小时内不重复请求）
     time_t now = time(nullptr);
     ESP_LOGI(TAG, "Current time: %ld, last update: %ld", (long)now, (long)data_.last_weather_update);
     

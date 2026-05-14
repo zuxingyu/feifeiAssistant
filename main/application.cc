@@ -63,6 +63,24 @@ void Application::SuppressMusicAutoResumeAfterAssistant() {
     music_auto_resume_after_assistant_ = false;
 }
 
+bool Application::ShouldSuppressWakeWordForMusic() const {
+    return GetDeviceState() == kDeviceStateIdle &&
+        audio_service_.IsMusicPlaying() &&
+        !audio_service_.IsMusicPaused() &&
+        !audio_service_.IsMusicSuspendedForAssistant();
+}
+
+void Application::RefreshWakeWordDetectionPolicy() {
+    if (GetDeviceState() != kDeviceStateIdle) {
+        return;
+    }
+
+    const bool suppress = ShouldSuppressWakeWordForMusic();
+    audio_service_.EnableVoiceProcessing(false);
+    audio_service_.EnableWakeWordDetection(!suppress);
+    ESP_LOGD(TAG, "Wake word %s while idle", suppress ? "disabled for music/story playback" : "enabled");
+}
+
 void Application::PauseMusicForAssistant() {
     if (music_paused_for_assistant_) {
         audio_service_.SetAssistantAudioActive(true);
@@ -98,6 +116,7 @@ void Application::ResumeMusicAfterAssistant() {
     } else {
         audio_service_.SetAssistantAudioActive(false);
     }
+    RefreshWakeWordDetectionPolicy();
 }
 
 void Application::EnterMusicPlaybackMode() {
@@ -161,6 +180,7 @@ bool Application::TryHandleLocalMusicCommand(const std::string& text) {
             audio_service_.CancelMusicPlayback();
             music_paused_for_assistant_ = false;
             music_auto_resume_after_assistant_ = false;
+            RefreshWakeWordDetectionPolicy();
             if (display != nullptr) {
                 display->SetChatMessage("music",
                     "{\"type\":\"music\",\"title\":\"未在播放\",\"artist\":\"\",\"album\":\"\","
@@ -174,6 +194,7 @@ bool Application::TryHandleLocalMusicCommand(const std::string& text) {
         if (action == Action::kPause) {
             audio_service_.PauseMusicPlayback();
             music_auto_resume_after_assistant_ = false;
+            RefreshWakeWordDetectionPolicy();
             set_music_state("已暂停");
             if (display != nullptr) {
                 display->SetChatMessage("assistant", "音乐已暂停");
@@ -190,6 +211,7 @@ bool Application::TryHandleLocalMusicCommand(const std::string& text) {
                     display->SetChatMessage("assistant", "音乐继续播放");
                 }
                 EnterMusicPlaybackMode();
+                RefreshWakeWordDetectionPolicy();
             }
         }
     });
@@ -387,6 +409,7 @@ void Application::Run() {
             clock_ticks_++;
             auto display = Board::GetInstance().GetDisplay();
             display->UpdateStatusBar();
+            RefreshWakeWordDetectionPolicy();
         
             // 每 10 秒打印一次堆内存调试信息。
             if (clock_ticks_ % 10 == 0) {
@@ -927,6 +950,12 @@ void Application::HandleWakeWordDetectedEvent() {
     auto wake_word = audio_service_.GetLastWakeWord();
     ESP_LOGI(TAG, "Wake word detected: %s (state: %d)", wake_word.c_str(), (int)state);
 
+    if (ShouldSuppressWakeWordForMusic()) {
+        ESP_LOGW(TAG, "Ignore wake word while music/story is playing");
+        audio_service_.EnableWakeWordDetection(false);
+        return;
+    }
+
     if (state == kDeviceStateIdle) {
         audio_service_.EncodeWakeWord();
         auto wake_word = audio_service_.GetLastWakeWord();
@@ -1015,8 +1044,7 @@ void Application::HandleStateChangedEvent() {
             display->SetStatus(Lang::Strings::STANDBY);
             display->ClearChatMessages();  // Clear messages first
             display->SetEmotion("neutral"); // Then set emotion (wechat mode checks child count)
-            audio_service_.EnableVoiceProcessing(false);
-            audio_service_.EnableWakeWordDetection(true);
+            RefreshWakeWordDetectionPolicy();
             break;
         case kDeviceStateConnecting:
             PauseMusicForAssistant();

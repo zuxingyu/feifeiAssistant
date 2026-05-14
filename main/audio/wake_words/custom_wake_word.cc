@@ -96,6 +96,19 @@ bool CustomWakeWord::Initialize(AudioCodec* codec, srmodel_list_t* models_list) 
     } else {
         models_ = models_list;
         ParseWakenetModelConfig();
+#ifdef CONFIG_CUSTOM_WAKE_WORD
+        bool has_configured_wake_word = false;
+        for (const auto& command : commands_) {
+            if (command.action == "wake" && command.command == CONFIG_CUSTOM_WAKE_WORD) {
+                has_configured_wake_word = true;
+                break;
+            }
+        }
+        if (!has_configured_wake_word) {
+            threshold_ = CONFIG_CUSTOM_WAKE_WORD_THRESHOLD / 100.0f;
+            commands_.push_back({CONFIG_CUSTOM_WAKE_WORD, CONFIG_CUSTOM_WAKE_WORD_DISPLAY, "wake"});
+        }
+#endif
     }
 
     if (models_ == nullptr || models_->num == -1) {

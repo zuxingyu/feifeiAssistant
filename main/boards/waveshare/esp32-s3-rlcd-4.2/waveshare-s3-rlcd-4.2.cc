@@ -124,6 +124,7 @@ private:
                 app.AbortSpeaking(kAbortReasonNone);
                 app.EnterMusicPlaybackMode();
                 app.GetAudioService().PlayMusicUrl(audio_url);
+                app.RefreshWakeWordDetectionPolicy();
             }
         });
     }
@@ -223,6 +224,7 @@ private:
             app.AbortSpeaking(kAbortReasonNone);
             app.EnterMusicPlaybackMode();
             app.GetAudioService().PlayMusicUrl(audio_url);
+            app.RefreshWakeWordDetectionPolicy();
         }
         return true;
     }
@@ -245,7 +247,7 @@ private:
         cJSON* preparing = cJSON_CreateObject();
         cJSON_AddStringToObject(preparing, "type", "music");
         cJSON_AddStringToObject(preparing, "title", keyword.c_str());
-        cJSON_AddStringToObject(preparing, "artist", "小智点歌");
+        cJSON_AddStringToObject(preparing, "artist", "菲菲点歌");
         cJSON_AddStringToObject(preparing, "state", "正在准备歌曲");
         cJSON_AddStringToObject(preparing, "lyric", "正在连接音乐解析服务...");
         char* preparing_text = cJSON_PrintUnformatted(preparing);
@@ -703,25 +705,30 @@ private:
         app.SuppressMusicAutoResumeAfterAssistant();
         if (audio_service.IsMusicPaused()) {
             UpdateMusicPlaybackState(false);
+            app.RefreshWakeWordDetectionPolicy();
             return "音乐已经暂停";
         }
         audio_service.PauseMusicPlayback();
         UpdateMusicPlaybackState(false);
+        app.RefreshWakeWordDetectionPolicy();
         return "音乐已暂停";
     }
 
     const char* ResumeMusicFromVoice() {
+        auto& app = Application::GetInstance();
         auto& audio_service = Application::GetInstance().GetAudioService();
         if (!audio_service.HasMusicSession()) {
             return "当前没有可继续播放的音乐";
         }
         if (!audio_service.IsMusicPaused() && !audio_service.IsMusicSuspendedForAssistant()) {
             UpdateMusicPlaybackState(true);
+            app.RefreshWakeWordDetectionPolicy();
             return "音乐正在播放";
         }
         audio_service.ResumeMusicPlayback();
-        Application::GetInstance().EnterMusicPlaybackMode();
+        app.EnterMusicPlaybackMode();
         UpdateMusicPlaybackState(true);
+        app.RefreshWakeWordDetectionPolicy();
         return "音乐继续播放";
     }
 
@@ -732,6 +739,7 @@ private:
         app.SuppressMusicAutoResumeAfterAssistant();
         audio_service.CancelMusicPlayback();
         UpdateMusicStoppedState();
+        app.RefreshWakeWordDetectionPolicy();
         return had_music ? "音乐已关闭" : "当前没有正在播放的音乐";
     }
 
@@ -747,11 +755,12 @@ private:
 
         bool playing = audio_service.ToggleMusicPause();
         UpdateMusicPlaybackState(playing);
+        Application::GetInstance().RefreshWakeWordDetectionPolicy();
         return playing;
     }
 
     void InitializeButtons() { 
-        // BOOT 按钮（GPIO0）- 唤醒/关闭小智对话。
+        // BOOT 按钮（GPIO0）- 唤醒/关闭菲菲对话。
         boot_button_.OnClick([this]() {
             auto& app = Application::GetInstance();
             if (app.GetDeviceState() == kDeviceStateStarting) {
@@ -875,6 +884,7 @@ private:
                     app.AbortSpeaking(kAbortReasonNone);
                     app.EnterMusicPlaybackMode();
                     app.GetAudioService().PlayMusicUrl(audio_url);
+                    app.RefreshWakeWordDetectionPolicy();
                 }
                 return true;
             });
@@ -932,6 +942,7 @@ private:
                     Application::GetInstance().EnterMusicPlaybackMode();
                 }
                 UpdateMusicPlaybackState(playing);
+                Application::GetInstance().RefreshWakeWordDetectionPolicy();
                 return playing ? "音乐继续播放" : "音乐已暂停";
             });
 

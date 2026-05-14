@@ -74,7 +74,7 @@ private:
     std::string last_status_text_;
     std::string last_message_text_;
     std::string last_activation_code_;
-    std::string shared_chat_text_ = "小智: 待命";
+    std::string shared_chat_text_ = "菲菲: 待命";
 
     lv_obj_t* boot_page_ = nullptr;
     lv_obj_t* boot_logo_label_ = nullptr;
@@ -138,6 +138,7 @@ private:
     lv_obj_t* music_temp_label_ = nullptr;
     lv_obj_t* music_humidity_label_ = nullptr;
     lv_obj_t* music_datetime_label_ = nullptr;
+    lv_obj_t* music_wifi_icon_label_ = nullptr;
     lv_obj_t* music_battery_label_ = nullptr;
     lv_obj_t* music_title_label_ = nullptr;
     lv_obj_t* music_artist_label_ = nullptr;
@@ -236,7 +237,8 @@ private:
     void CreateWeatherPage(lv_obj_t* screen);
     void SwitchPage(UiPage page);
     void UpdateWifiConfigMessage(const char* message);
-    void UpdateTopBar(lv_obj_t* temp_label, lv_obj_t* humidity_label, lv_obj_t* datetime_label, lv_obj_t* battery_label);
+    void UpdateTopBar(lv_obj_t* temp_label, lv_obj_t* humidity_label, lv_obj_t* datetime_label,
+                      lv_obj_t* wifi_icon, lv_obj_t* battery_label);
     void UpdateWifiConfigPage();
     void UpdateActivationCode(const char* code);
     void UpdateHomeStatus(const char* status);

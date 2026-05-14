@@ -114,6 +114,7 @@ public:
     AudioService& GetAudioService() { return audio_service_; }
     void EnterMusicPlaybackMode();
     void SuppressMusicAutoResumeAfterAssistant();
+    void RefreshWakeWordDetectionPolicy();
     
     /**
      * Reset protocol resources (thread-safe)
@@ -173,6 +174,7 @@ private:
     void PauseMusicForAssistant();
     void ResumeMusicAfterAssistant();
     bool TryHandleLocalMusicCommand(const std::string& text);
+    bool ShouldSuppressWakeWordForMusic() const;
     
     // State change handler called by state machine
     void OnStateChanged(DeviceState old_state, DeviceState new_state);

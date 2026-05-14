@@ -20,6 +20,11 @@
 #include "config.h"
 #include "board.h"
 #include "home_data_store.h"
+#include "wifi_manager.h"
+
+extern const lv_image_dsc_t ui_img_wifi;
+extern const lv_image_dsc_t ui_img_wifi_low;
+extern const lv_image_dsc_t ui_img_wifi_off;
 
 void CustomLcdDisplay::Lvgl_flush_cb(lv_display_t * disp, const lv_area_t * area, uint8_t * color_p)
 {
@@ -733,7 +738,7 @@ void CustomLcdDisplay::CreateWifiConfigPage(lv_obj_t* screen) {
     lv_label_set_long_mode(wifi_config_hint_label_, LV_LABEL_LONG_WRAP);
     lv_label_set_text(wifi_config_hint_label_, "请先连接上方热点，再在浏览器中打开访问地址完成配置");
 
-    UpdateTopBar(wifi_config_temp_label_, wifi_config_humidity_label_, nullptr, wifi_config_battery_label_);
+    UpdateTopBar(wifi_config_temp_label_, wifi_config_humidity_label_, nullptr, nullptr, wifi_config_battery_label_);
 
     lv_obj_add_flag(wifi_config_page_, LV_OBJ_FLAG_HIDDEN);
 }
@@ -754,7 +759,7 @@ void CustomLcdDisplay::CreateHomePage(lv_obj_t* screen) {
     // │ 明日课程                             │
     // │ 1.数学 2.语文 ...                    │
     // ├──────────────────────────────────────┤
-    // │ 小智: 待命                           │  <- 底部状态条
+    // │ 菲菲: 待命                           │  <- 底部状态条
     // └──────────────────────────────────────┘
     // ========================================================================
 
@@ -965,7 +970,7 @@ void CustomLcdDisplay::CreateHomePage(lv_obj_t* screen) {
     auto* course_area = lv_obj_create(main_area);
     lv_obj_set_width(course_area, LV_HOR_RES);
     // 课程区总高度由 flex_grow 自动占用剩余空间：
-    // 屏幕300 - 顶栏28 - 时间条44 - 天气条76 - 底部小智条24 ≈ 128px。
+    // 屏幕300 - 顶栏28 - 时间条44 - 天气条76 - 底部菲菲条24 ≈ 128px。
     lv_obj_set_flex_grow(course_area, 1);
     lv_obj_set_style_radius(course_area, 0, 0);
     lv_obj_set_style_bg_color(course_area, lv_color_white(), 0);
@@ -1050,7 +1055,7 @@ void CustomLcdDisplay::CreateHomePage(lv_obj_t* screen) {
 
     // ====================== 底部状态条 ======================
     auto* bottom_strip = lv_obj_create(main_area);
-    lv_obj_set_size(bottom_strip, LV_HOR_RES, 24);  // 首页底部小智对话条高度，当前为单行。
+    lv_obj_set_size(bottom_strip, LV_HOR_RES, 24);  // 首页底部菲菲对话条高度，当前为单行。
     lv_obj_set_style_radius(bottom_strip, 0, 0);
     lv_obj_set_style_bg_color(bottom_strip, lv_color_white(), 0);
     lv_obj_set_style_border_width(bottom_strip, 1, 0);
@@ -1070,12 +1075,12 @@ void CustomLcdDisplay::CreateHomePage(lv_obj_t* screen) {
     lv_obj_set_height(home_bottom_status_label_, 18);
     lv_label_set_long_mode(home_bottom_status_label_, LV_LABEL_LONG_DOT);
     lv_label_set_text(home_bottom_status_label_,
-                      std::string("小智: ").append(Lang::Strings::STANDBY).c_str());
+                      std::string("菲菲: ").append(Lang::Strings::STANDBY).c_str());
 
     // ====================== 初始化顶栏数据 ======================
     // 主页的顶栏不显示时间，所以 datetime_label 传 nullptr
     UpdateTopBar(home_top_temp_label_, home_top_humidity_label_,
-                 nullptr, home_top_battery_label_);
+                 nullptr, home_top_wifi_icon_label_, home_top_battery_label_);
 
     // ====================== 创建定时刷新器（60 秒周期）======================
     if (home_refresh_timer_ == nullptr) {
@@ -1121,7 +1126,7 @@ void CustomLcdDisplay::CreateMusicPage(lv_obj_t* screen) {
         &music_temp_label_,
         &music_humidity_label_,
         &music_datetime_label_,
-        nullptr,
+        &music_wifi_icon_label_,
         &music_battery_label_,
         true,   // show datetime
         true,    // show wifi icon
@@ -1239,7 +1244,7 @@ void CustomLcdDisplay::CreateMusicPage(lv_obj_t* screen) {
     lv_obj_set_style_pad_left(btn_next, 12, 0);
     lv_label_set_text(btn_next, FONT_AWESOME_FORWARD_STEP);
 
-    // —— 歌词区：固定高度，只包裹多行歌词，下方留出小智对话条 ——
+    // —— 歌词区：固定高度，只包裹多行歌词，下方留出菲菲对话条 ——
     auto* lyrics_box = lv_obj_create(main_area);
     lv_obj_set_width(lyrics_box, LV_HOR_RES - 48);
     lv_obj_set_height(lyrics_box, 78);
@@ -1267,7 +1272,7 @@ void CustomLcdDisplay::CreateMusicPage(lv_obj_t* screen) {
     lv_label_set_long_mode(music_lyrics_label_, LV_LABEL_LONG_WRAP);
     lv_label_set_text(music_lyrics_label_, "暂无歌词");
 
-    // —— 底部小智对话条：常驻占位，唤醒/对话时显示最新内容 ——
+    // —— 底部菲菲对话条：常驻占位，唤醒/对话时显示最新内容 ——
     auto* bottom_strip = lv_obj_create(main_area);
     lv_obj_set_size(bottom_strip, LV_HOR_RES, 24);
     lv_obj_set_style_radius(bottom_strip, 0, 0);
@@ -1288,9 +1293,10 @@ void CustomLcdDisplay::CreateMusicPage(lv_obj_t* screen) {
     lv_obj_set_style_text_align(music_chat_label_, LV_TEXT_ALIGN_LEFT, 0);
     lv_obj_set_height(music_chat_label_, 18);
     lv_label_set_long_mode(music_chat_label_, LV_LABEL_LONG_DOT);
-    lv_label_set_text(music_chat_label_, "小智: 待命");
+    lv_label_set_text(music_chat_label_, "菲菲: 待命");
 
-    UpdateTopBar(music_temp_label_, music_humidity_label_, music_datetime_label_, music_battery_label_);
+    UpdateTopBar(music_temp_label_, music_humidity_label_, music_datetime_label_,
+                 music_wifi_icon_label_, music_battery_label_);
 
     lv_obj_add_flag(music_page_, LV_OBJ_FLAG_HIDDEN);
 }
@@ -1455,9 +1461,10 @@ void CustomLcdDisplay::CreateSchedulePage(lv_obj_t* screen) {
     lv_obj_set_style_text_color(schedule_chat_label_, lv_color_black(), 0);
     lv_obj_set_style_text_align(schedule_chat_label_, LV_TEXT_ALIGN_LEFT, 0);
     lv_label_set_long_mode(schedule_chat_label_, LV_LABEL_LONG_DOT);
-    lv_label_set_text(schedule_chat_label_, "小智: 待命");
+    lv_label_set_text(schedule_chat_label_, "菲菲: 待命");
 
-    UpdateTopBar(schedule_temp_label_, schedule_humidity_label_, schedule_datetime_label_, schedule_battery_label_);
+    UpdateTopBar(schedule_temp_label_, schedule_humidity_label_, schedule_datetime_label_,
+                 schedule_wifi_icon_label_, schedule_battery_label_);
     lv_obj_add_flag(schedule_page_, LV_OBJ_FLAG_HIDDEN);
 }
 
@@ -1656,9 +1663,10 @@ void CustomLcdDisplay::CreateWeatherPage(lv_obj_t* screen) {
     lv_obj_set_style_text_color(weather_chat_label_, lv_color_black(), 0);
     lv_obj_set_style_text_align(weather_chat_label_, LV_TEXT_ALIGN_LEFT, 0);
     lv_label_set_long_mode(weather_chat_label_, LV_LABEL_LONG_DOT);
-    lv_label_set_text(weather_chat_label_, "小智: 待命");
+    lv_label_set_text(weather_chat_label_, "菲菲: 待命");
 
-    UpdateTopBar(weather_temp_label_, weather_humidity_label_, weather_datetime_label_, weather_battery_label_);
+    UpdateTopBar(weather_temp_label_, weather_humidity_label_, weather_datetime_label_,
+                 weather_wifi_icon_label_, weather_battery_label_);
     lv_obj_add_flag(weather_page_, LV_OBJ_FLAG_HIDDEN);
 }
 
@@ -2020,7 +2028,7 @@ void CustomLcdDisplay::ScheduleChatHideTimerCb(lv_timer_t* timer) {
     if (self == nullptr) {
         return;
     }
-    self->SetSharedChatText("小智: 待命");
+    self->SetSharedChatText("菲菲: 待命");
     lv_timer_del(timer);
     self->schedule_chat_hide_timer_ = nullptr;
 }
@@ -2155,7 +2163,8 @@ void CustomLcdDisplay::UpdateMusicFromMessage(const char* role, const char* cont
             lv_timer_pause(music_mock_timer_);
         }
         SwitchPage(UiPage::kMusic);
-        UpdateTopBar(music_temp_label_, music_humidity_label_, music_datetime_label_, music_battery_label_);
+        UpdateTopBar(music_temp_label_, music_humidity_label_, music_datetime_label_,
+                     music_wifi_icon_label_, music_battery_label_);
         UpdateMusicPage();
     }
 }
@@ -2165,7 +2174,7 @@ void CustomLcdDisplay::MusicChatHideTimerCb(lv_timer_t* timer) {
     if (self == nullptr) {
         return;
     }
-    self->SetSharedChatText("小智: 待命");
+    self->SetSharedChatText("菲菲: 待命");
     lv_timer_del(timer);
     self->music_chat_hide_timer_ = nullptr;
 }
@@ -2268,9 +2277,10 @@ void CustomLcdDisplay::CreateActivationPage(lv_obj_t* screen) {
     lv_obj_set_style_text_color(activation_hint_label_, lv_color_black(), 0);
     lv_obj_set_style_text_align(activation_hint_label_, LV_TEXT_ALIGN_CENTER, 0);
     lv_label_set_long_mode(activation_hint_label_, LV_LABEL_LONG_WRAP);
-    lv_label_set_text(activation_hint_label_, "请在小智控制台输入验证码完成激活");
+    lv_label_set_text(activation_hint_label_, "请在菲菲控制台输入验证码完成激活");
 
-    UpdateTopBar(activation_temp_label_, activation_humidity_label_, activation_datetime_label_, activation_battery_label_);
+    UpdateTopBar(activation_temp_label_, activation_humidity_label_, activation_datetime_label_,
+                 nullptr, activation_battery_label_);
     lv_obj_add_flag(activation_page_, LV_OBJ_FLAG_HIDDEN);
 }
 
@@ -2308,11 +2318,13 @@ void CustomLcdDisplay::CyclePage() {
         UpdateMusicPage();
     } else if (current_page_ == UiPage::kMusic) {
         SwitchPage(UiPage::kSchedule);
-        UpdateTopBar(schedule_temp_label_, schedule_humidity_label_, schedule_datetime_label_, schedule_battery_label_);
+        UpdateTopBar(schedule_temp_label_, schedule_humidity_label_, schedule_datetime_label_,
+                     schedule_wifi_icon_label_, schedule_battery_label_);
         UpdateSchedulePage();
     } else if (current_page_ == UiPage::kSchedule) {
         SwitchPage(UiPage::kWeather);
-        UpdateTopBar(weather_temp_label_, weather_humidity_label_, weather_datetime_label_, weather_battery_label_);
+        UpdateTopBar(weather_temp_label_, weather_humidity_label_, weather_datetime_label_,
+                     weather_wifi_icon_label_, weather_battery_label_);
         UpdateWeatherPage();
     } else if (current_page_ == UiPage::kWeather) {
         SwitchPage(UiPage::kHome);
@@ -2356,7 +2368,7 @@ lv_obj_t* CustomLcdDisplay::CreateTopBar(lv_obj_t* parent,
     // 顶部状态栏（公共组件）：
     // - 左侧：温度/湿度
     // - 右侧：按页面需要展示图标（WiFi/电池）
-    // 注意：图标使用 LVGL 内置 LV_SYMBOL_*，必须用默认字体（LV_FONT_DEFAULT）才能确保有字形
+    // 注意：WiFi 使用 24x24 位图资源，便于按信号强弱切换图标。
     lv_obj_t* top_bar = lv_obj_create(parent);
     lv_obj_set_size(top_bar, LV_HOR_RES, 28);
     lv_obj_align(top_bar, LV_ALIGN_TOP_LEFT, 0, 0);
@@ -2404,10 +2416,9 @@ lv_obj_t* CustomLcdDisplay::CreateTopBar(lv_obj_t* parent,
     lv_obj_set_flex_flow(top_right, LV_FLEX_FLOW_ROW);
     lv_obj_set_style_pad_column(top_right, 6, 0);
 
-    lv_obj_t* wifi_icon_label = lv_label_create(top_right);
-    lv_obj_set_style_text_font(wifi_icon_label, LV_FONT_DEFAULT, 0);
-    lv_obj_set_style_text_color(wifi_icon_label, lv_color_black(), 0);
-    lv_label_set_text(wifi_icon_label, LV_SYMBOL_WIFI);
+    lv_obj_t* wifi_icon_label = lv_image_create(top_right);
+    lv_image_set_src(wifi_icon_label, &ui_img_wifi_off);
+    lv_obj_set_size(wifi_icon_label, 24, 24);
 
     lv_obj_t* battery_label = lv_label_create(top_right);
     lv_obj_set_style_text_font(battery_label, LV_FONT_DEFAULT, 0);
@@ -2449,20 +2460,23 @@ void CustomLcdDisplay::TopBarTimerCb(lv_timer_t* timer) {
     if (self == nullptr) {
         return;
     }
-    self->UpdateTopBar(self->wifi_config_temp_label_, self->wifi_config_humidity_label_, nullptr, self->wifi_config_battery_label_);
-    self->UpdateTopBar(self->activation_temp_label_, self->activation_humidity_label_, self->activation_datetime_label_, self->activation_battery_label_);
+    self->UpdateTopBar(self->wifi_config_temp_label_, self->wifi_config_humidity_label_, nullptr,
+                       nullptr, self->wifi_config_battery_label_);
+    self->UpdateTopBar(self->activation_temp_label_, self->activation_humidity_label_, self->activation_datetime_label_,
+                       nullptr, self->activation_battery_label_);
     // 同步更新主页顶栏的温度/湿度/电池（主页不显示时间，datetime_label 传 nullptr）
     self->UpdateTopBar(self->home_top_temp_label_, self->home_top_humidity_label_,
-                       nullptr, self->home_top_battery_label_);
+                       nullptr, self->home_top_wifi_icon_label_, self->home_top_battery_label_);
     self->UpdateTopBar(self->music_temp_label_, self->music_humidity_label_,
-                       self->music_datetime_label_, self->music_battery_label_);
+                       self->music_datetime_label_, self->music_wifi_icon_label_, self->music_battery_label_);
     self->UpdateTopBar(self->schedule_temp_label_, self->schedule_humidity_label_,
-                       self->schedule_datetime_label_, self->schedule_battery_label_);
+                       self->schedule_datetime_label_, self->schedule_wifi_icon_label_, self->schedule_battery_label_);
     self->UpdateTopBar(self->weather_temp_label_, self->weather_humidity_label_,
-                       self->weather_datetime_label_, self->weather_battery_label_);
+                       self->weather_datetime_label_, self->weather_wifi_icon_label_, self->weather_battery_label_);
 }
 
-void CustomLcdDisplay::UpdateTopBar(lv_obj_t* temp_label, lv_obj_t* humidity_label, lv_obj_t* datetime_label, lv_obj_t* battery_label) {
+void CustomLcdDisplay::UpdateTopBar(lv_obj_t* temp_label, lv_obj_t* humidity_label, lv_obj_t* datetime_label,
+                                    lv_obj_t* wifi_icon, lv_obj_t* battery_label) {
     float temp = 0.0f;
     bool temp_ok = Board::GetInstance().GetTemperature(temp);
 
@@ -2500,6 +2514,17 @@ void CustomLcdDisplay::UpdateTopBar(lv_obj_t* temp_label, lv_obj_t* humidity_lab
         } else {
             lv_label_set_text(datetime_label, "----年--月--日 --:--  ");
         }
+    }
+
+    if (wifi_icon != nullptr) {
+        auto& wifi = WifiManager::GetInstance();
+        const bool connected = wifi.IsConnected() && !wifi.GetIpAddress().empty();
+        const lv_image_dsc_t* icon = &ui_img_wifi_off;
+        if (connected) {
+            int rssi = wifi.GetRssi();
+            icon = (rssi <= -75) ? &ui_img_wifi_low : &ui_img_wifi;
+        }
+        lv_image_set_src(wifi_icon, icon);
     }
 
     if (battery_label != nullptr) {
@@ -2565,14 +2590,14 @@ void CustomLcdDisplay::UpdateWifiConfigPage() {
 
 void CustomLcdDisplay::UpdateHomeStatus(const char* status) {
     last_status_text_ = status != nullptr ? status : "";
-    std::string display_text = "小智: ";
+    std::string display_text = "菲菲: ";
     display_text += last_status_text_.empty() ? Lang::Strings::STANDBY : last_status_text_;
     SetSharedChatText(display_text);
 }
 
 void CustomLcdDisplay::SetSharedStatus(const char* status) {
     const char* safe_status = status != nullptr ? status : "";
-    std::string display_text = "小智: ";
+    std::string display_text = "菲菲: ";
     display_text += safe_status[0] == '\0' ? Lang::Strings::STANDBY : safe_status;
     SetSharedChatText(display_text);
 }
@@ -2586,19 +2611,19 @@ void CustomLcdDisplay::SetSharedChatMessage(const char* role, const char* conten
     if (role != nullptr && strcmp(role, "user") == 0) {
         display_text = "我: ";
     } else {
-        display_text = "小智: ";
+        display_text = "菲菲: ";
     }
     display_text += content;
     SetSharedChatText(display_text);
 }
 
 void CustomLcdDisplay::SetSharedChatText(const std::string& text) {
-    shared_chat_text_ = text.empty() ? "小智: 待命" : text;
+    shared_chat_text_ = text.empty() ? "菲菲: 待命" : text;
     SyncSharedChatLabels();
 }
 
 void CustomLcdDisplay::SyncSharedChatLabels() {
-    const char* text = shared_chat_text_.empty() ? "小智: 待命" : shared_chat_text_.c_str();
+    const char* text = shared_chat_text_.empty() ? "菲菲: 待命" : shared_chat_text_.c_str();
     if (home_bottom_status_label_ != nullptr) {
         lv_label_set_text(home_bottom_status_label_, text);
     }
@@ -2640,7 +2665,7 @@ void CustomLcdDisplay::HomeRefreshTimerCb(lv_timer_t* timer) {
  * - 时间条：日期（"今天 周四"）+ 大字时钟（"12:33"）
  * - 三日天气：今日/明日/后天天气描述和温度
  * - 今日/明日课程：显示课程名称列表
- * - 天气数据通过 RefreshWeather() 异步触发（带 30 分钟缓存）
+ * - 天气数据通过 RefreshWeather() 异步触发（带 1 小时缓存）
  */
 void CustomLcdDisplay::UpdateHomePage() {
     if (home_data_store_ == nullptr) {
@@ -2651,7 +2676,7 @@ void CustomLcdDisplay::UpdateHomePage() {
     home_data_store_->UpdateSchedule();
 
     // —— 触发天气刷新（在后台任务中执行，避免阻塞 LVGL）——
-    // RefreshWeather() 内部有 30 分钟缓存检查，去掉一次性标志以支持定时重试
+    // RefreshWeather() 内部有 1 小时缓存检查，开机获取后按小时轮询
     static bool s_weather_task_running = false;
     
     if (!s_weather_task_running && home_data_store_->HasWeatherConfig()) {
@@ -2911,13 +2936,14 @@ void CustomLcdDisplay::SetStatus(const char* status) {
 
     if (strcmp(safe_status, Lang::Strings::WIFI_CONFIG_MODE) == 0) {
         SwitchPage(UiPage::kWifiConfig);
-        UpdateTopBar(wifi_config_temp_label_, wifi_config_humidity_label_, nullptr, wifi_config_battery_label_);
+        UpdateTopBar(wifi_config_temp_label_, wifi_config_humidity_label_, nullptr, nullptr, wifi_config_battery_label_);
         UpdateWifiConfigPage();
     } else if (strcmp(safe_status, Lang::Strings::ACTIVATION) == 0) {
         SwitchPage(UiPage::kActivation);
-        UpdateTopBar(activation_temp_label_, activation_humidity_label_, activation_datetime_label_, activation_battery_label_);
+        UpdateTopBar(activation_temp_label_, activation_humidity_label_, activation_datetime_label_,
+                     nullptr, activation_battery_label_);
         if (activation_hint_label_ != nullptr) {
-            lv_label_set_text(activation_hint_label_, "请在小智控制台输入验证码完成激活");
+            lv_label_set_text(activation_hint_label_, "请在菲菲控制台输入验证码完成激活");
         }
         UpdateActivationCode(nullptr);
     } else if (strcmp(safe_status, Lang::Strings::STANDBY) == 0) {
@@ -2982,7 +3008,7 @@ void CustomLcdDisplay::ClearChatMessages() {
     }
 
     last_message_text_.clear();
-    SetSharedChatText("小智: 待命");
+    SetSharedChatText("菲菲: 待命");
     UpdateWifiConfigPage();
 
     Unlock();

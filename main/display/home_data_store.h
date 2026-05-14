@@ -11,7 +11,7 @@
  *
  * @note  本模块运行在 ESP32-S3 (ESP-IDF 5.5.4) 环境中，需注意：
  *        - 内存有限，使用 std::vector 而非 std::map 以节省开销
- *        - 天气数据缓存周期为 30 分钟，避免过于频繁地发起 HTTP 请求
+ *        - 天气数据缓存周期为 1 小时，开机获取后按小时轮询
  *        - 课程表仅在 NVS 数据变更时重新加载，运行时保持静态
  *
  * @par NVS 键名映射（namespace: "setup"）
@@ -104,7 +104,7 @@ struct HomeData {
  *
  * 单例模式（可选），统一管理课程表解析和天气数据获取。
  * 外部通过 LoadFromNvs() 初始化，然后调用 GetHomeData() 获取当前数据。
- * 天气数据通过 RefreshWeather() 手动触发刷新（建议每 30 分钟调用一次）。
+ * 天气数据通过 RefreshWeather() 手动触发刷新（内部按 1 小时缓存）。
  */
 class HomeDataStore {
 public:
@@ -136,7 +136,7 @@ public:
     /**
      * @brief 从心和天气 API 获取天气数据
      *
-     * 发起 HTTP GET 请求获取 3 日天气预报。如果距上次更新不足 30 分钟，
+     * 发起 HTTP GET 请求获取 3 日天气预报。如果距上次更新不足 1 小时，
      * 则跳过请求直接返回缓存数据，避免频繁调用浪费流量。
      *
      * @return true  天气数据更新成功或仍在缓存有效期内
