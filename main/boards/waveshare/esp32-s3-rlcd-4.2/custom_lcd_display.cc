@@ -22,10 +22,6 @@
 #include "home_data_store.h"
 #include "wifi_manager.h"
 
-extern const lv_image_dsc_t ui_img_wifi;
-extern const lv_image_dsc_t ui_img_wifi_low;
-extern const lv_image_dsc_t ui_img_wifi_off;
-
 void CustomLcdDisplay::Lvgl_flush_cb(lv_display_t * disp, const lv_area_t * area, uint8_t * color_p)
 {
     assert(disp != NULL);
@@ -1440,6 +1436,15 @@ void CustomLcdDisplay::CreateSchedulePage(lv_obj_t* screen) {
         }
     }
 
+    schedule_empty_label_ = lv_label_create(main_area);
+    lv_obj_set_width(schedule_empty_label_, LV_HOR_RES - 40);
+    lv_obj_align(schedule_empty_label_, LV_ALIGN_CENTER, 0, -4);
+    lv_obj_set_style_text_font(schedule_empty_label_, &alibaba_puhui_24, 0);
+    lv_obj_set_style_text_color(schedule_empty_label_, lv_color_black(), 0);
+    lv_obj_set_style_text_align(schedule_empty_label_, LV_TEXT_ALIGN_CENTER, 0);
+    lv_label_set_text(schedule_empty_label_, "暂无课程");
+    lv_obj_add_flag(schedule_empty_label_, LV_OBJ_FLAG_HIDDEN);
+
     auto* bottom_strip = lv_obj_create(main_area);
     lv_obj_set_size(bottom_strip, LV_HOR_RES, 24);
     lv_obj_align(bottom_strip, LV_ALIGN_BOTTOM_LEFT, 0, 0);
@@ -1755,6 +1760,7 @@ void CustomLcdDisplay::UpdateSchedulePage() {
 
     const HomeData& data = home_data_store_->GetHomeData();
     const DaySchedule* week = home_data_store_->GetWeekSchedule(schedule_show_dual_);
+    const bool schedule_unavailable = !data.has_schedule || data.schedule_expired;
 
     auto apply_week_style = [](lv_obj_t* label, bool active) {
         if (label == nullptr) {
@@ -1768,8 +1774,11 @@ void CustomLcdDisplay::UpdateSchedulePage() {
     apply_week_style(schedule_dual_label_, schedule_show_dual_);
 
     if (schedule_range_label_ != nullptr) {
-        time_t now = time(nullptr);
-        if (now >= 946684800) {
+        if (data.schedule_expired) {
+            lv_label_set_text(schedule_range_label_, "课程表已过期");
+        } else {
+            time_t now = time(nullptr);
+            if (now >= 946684800) {
             struct tm tm_now = {};
             localtime_r(&now, &tm_now);
             int days_from_monday = tm_now.tm_wday == 0 ? 6 : tm_now.tm_wday - 1;
@@ -1783,28 +1792,40 @@ void CustomLcdDisplay::UpdateSchedulePage() {
             snprintf(range, sizeof(range), "%02d月%02d日-%02d月%02d日",
                      tm_mon.tm_mon + 1, tm_mon.tm_mday, tm_fri.tm_mon + 1, tm_fri.tm_mday);
             lv_label_set_text(schedule_range_label_, range);
-        } else {
-            lv_label_set_text(schedule_range_label_, schedule_show_dual_ ? "双周课程" : "单周课程");
+            } else {
+                lv_label_set_text(schedule_range_label_, schedule_show_dual_ ? "双周课程" : "单周课程");
+            }
         }
     }
 
-    if (!data.has_schedule) {
+    if (schedule_empty_label_ != nullptr) {
+        if (schedule_unavailable) {
+            lv_obj_remove_flag(schedule_empty_label_, LV_OBJ_FLAG_HIDDEN);
+            lv_label_set_text(schedule_empty_label_, data.schedule_expired ? "暂无课程" : "未配置课程表");
+        } else {
+            lv_obj_add_flag(schedule_empty_label_, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+
+    if (schedule_unavailable) {
         if (schedule_table_ != nullptr) {
-            lv_obj_set_height(schedule_table_, 20 + 8 * 22);
+            lv_obj_add_flag(schedule_table_, LV_OBJ_FLAG_HIDDEN);
         }
         for (int p = 0; p < 8; ++p) {
             if (schedule_course_rows_[p] != nullptr) {
-                lv_obj_remove_flag(schedule_course_rows_[p], LV_OBJ_FLAG_HIDDEN);
-                lv_obj_set_height(schedule_course_rows_[p], 22);
-                lv_obj_align(schedule_course_rows_[p], LV_ALIGN_TOP_LEFT, 0, 20 + p * 22);
+                lv_obj_add_flag(schedule_course_rows_[p], LV_OBJ_FLAG_HIDDEN);
             }
             for (int d = 0; d < 5; ++d) {
                 if (schedule_course_labels_[p][d] != nullptr) {
-                    lv_label_set_text(schedule_course_labels_[p][d], p == 0 && d == 0 ? "未配置" : "");
+                    lv_label_set_text(schedule_course_labels_[p][d], "");
                 }
             }
         }
         return;
+    }
+
+    if (schedule_table_ != nullptr) {
+        lv_obj_remove_flag(schedule_table_, LV_OBJ_FLAG_HIDDEN);
     }
 
     bool row_has_course[8] = {};
@@ -2368,7 +2389,7 @@ lv_obj_t* CustomLcdDisplay::CreateTopBar(lv_obj_t* parent,
     // 顶部状态栏（公共组件）：
     // - 左侧：温度/湿度
     // - 右侧：按页面需要展示图标（WiFi/电池）
-    // 注意：WiFi 使用 24x24 位图资源，便于按信号强弱切换图标。
+    // 注意：WiFi 使用 LVGL 内置三段式符号，保持与原状态栏图标尺寸一致。
     lv_obj_t* top_bar = lv_obj_create(parent);
     lv_obj_set_size(top_bar, LV_HOR_RES, 28);
     lv_obj_align(top_bar, LV_ALIGN_TOP_LEFT, 0, 0);
@@ -2416,9 +2437,12 @@ lv_obj_t* CustomLcdDisplay::CreateTopBar(lv_obj_t* parent,
     lv_obj_set_flex_flow(top_right, LV_FLEX_FLOW_ROW);
     lv_obj_set_style_pad_column(top_right, 6, 0);
 
-    lv_obj_t* wifi_icon_label = lv_image_create(top_right);
-    lv_image_set_src(wifi_icon_label, &ui_img_wifi_off);
-    lv_obj_set_size(wifi_icon_label, 24, 24);
+    lv_obj_t* wifi_icon_label = lv_label_create(top_right);
+    lv_obj_set_style_text_font(wifi_icon_label, LV_FONT_DEFAULT, 0);
+    lv_obj_set_style_text_color(wifi_icon_label, lv_color_black(), 0);
+    lv_obj_set_width(wifi_icon_label, 18);
+    lv_obj_set_style_text_align(wifi_icon_label, LV_TEXT_ALIGN_CENTER, 0);
+    lv_label_set_text(wifi_icon_label, LV_SYMBOL_WIFI);
 
     lv_obj_t* battery_label = lv_label_create(top_right);
     lv_obj_set_style_text_font(battery_label, LV_FONT_DEFAULT, 0);
@@ -2519,12 +2543,13 @@ void CustomLcdDisplay::UpdateTopBar(lv_obj_t* temp_label, lv_obj_t* humidity_lab
     if (wifi_icon != nullptr) {
         auto& wifi = WifiManager::GetInstance();
         const bool connected = wifi.IsConnected() && !wifi.GetIpAddress().empty();
-        const lv_image_dsc_t* icon = &ui_img_wifi_off;
+        lv_label_set_text(wifi_icon, connected ? LV_SYMBOL_WIFI : LV_SYMBOL_CLOSE);
         if (connected) {
             int rssi = wifi.GetRssi();
-            icon = (rssi <= -75) ? &ui_img_wifi_low : &ui_img_wifi;
+            lv_obj_set_style_text_opa(wifi_icon, rssi <= -75 ? LV_OPA_60 : LV_OPA_COVER, 0);
+        } else {
+            lv_obj_set_style_text_opa(wifi_icon, LV_OPA_60, 0);
         }
-        lv_image_set_src(wifi_icon, icon);
     }
 
     if (battery_label != nullptr) {
@@ -2775,7 +2800,7 @@ void CustomLcdDisplay::UpdateHomePage() {
     // 根据原型：周末显示 "周末愉快! :-D"，工作日显示课程列表
     if (home_today_title_label_ != nullptr) {
         // 显示单双周信息
-        if (data.has_schedule) {
+        if (data.has_schedule && !data.schedule_expired) {
             time_t now = time(nullptr);
             bool is_dual = home_data_store_->IsDualWeek(now);
             const char* week_str = is_dual ? "双周" : "单周";
@@ -2797,6 +2822,8 @@ void CustomLcdDisplay::UpdateHomePage() {
     if (home_today_courses_label_ != nullptr) {
         if (!data.has_schedule) {
             lv_label_set_text(home_today_courses_label_, "未配置课程表");
+        } else if (data.schedule_expired) {
+            lv_label_set_text(home_today_courses_label_, "暂无课程");
         } else if (data.today_schedule.courses.empty()) {
             lv_label_set_text(home_today_courses_label_, "周末愉快! :-D");
         } else {
@@ -2828,7 +2855,7 @@ void CustomLcdDisplay::UpdateHomePage() {
     // ====================== 明日课程 ======================
     // 根据原型：周末/休息日显示 "好好休息 ^_^"，工作日显示课程列表
     if (home_tomorrow_title_label_ != nullptr) {
-        if (data.has_schedule) {
+        if (data.has_schedule && !data.schedule_expired) {
             // 明天的单双周可能和今天不同（跨周时）
             time_t now = time(nullptr);
             time_t tomorrow = now + 86400;  // 加一天
@@ -2846,6 +2873,8 @@ void CustomLcdDisplay::UpdateHomePage() {
     if (home_tomorrow_courses_label_ != nullptr) {
         if (!data.has_schedule) {
             lv_label_set_text(home_tomorrow_courses_label_, "未配置课程表");
+        } else if (data.schedule_expired) {
+            lv_label_set_text(home_tomorrow_courses_label_, "暂无课程");
         } else if (data.tomorrow_schedule.courses.empty()) {
             lv_label_set_text(home_tomorrow_courses_label_, "好好休息 ^_^");
         } else {

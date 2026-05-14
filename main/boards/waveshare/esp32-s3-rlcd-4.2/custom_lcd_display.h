@@ -172,6 +172,7 @@ private:
     lv_obj_t* schedule_dual_label_ = nullptr;
     lv_obj_t* schedule_range_label_ = nullptr;
     lv_obj_t* schedule_table_ = nullptr;
+    lv_obj_t* schedule_empty_label_ = nullptr;
     lv_obj_t* schedule_course_rows_[8] = {};
     lv_obj_t* schedule_course_labels_[8][5] = {};
     lv_obj_t* schedule_chat_label_ = nullptr;

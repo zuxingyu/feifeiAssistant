@@ -127,6 +127,7 @@ HomeDataStore::HomeDataStore()
     // 初始化首页数据结构
     data_.last_weather_update = 0;
     data_.has_schedule = false;
+    data_.schedule_expired = false;
     data_.has_weather_config = false;
 
     // 初始化单双周课程数组的星期名称
@@ -187,6 +188,7 @@ bool HomeDataStore::LoadScheduleFromNvs() {
         schedule_json_cache_.clear();
         schedule_parsed_ = false;
         data_.has_schedule = false;
+        data_.schedule_expired = false;
         return false;
     }
 
@@ -412,6 +414,29 @@ bool HomeDataStore::IsDualWeek(time_t target_date) const {
     return is_dual;
 }
 
+bool HomeDataStore::IsScheduleExpired(time_t target_date) const {
+    if (semester_end_.empty() || target_date < 946684800) {
+        return false;
+    }
+
+    struct tm end_tm = {};
+    if (strptime(semester_end_.c_str(), "%Y-%m-%d", &end_tm) == nullptr) {
+        ESP_LOGW(TAG, "学期结束日期格式无效: %s", semester_end_.c_str());
+        return false;
+    }
+    end_tm.tm_hour = 23;
+    end_tm.tm_min = 59;
+    end_tm.tm_sec = 59;
+    end_tm.tm_isdst = -1;
+    time_t end_time = mktime(&end_tm);
+    if (end_time < 0) {
+        ESP_LOGW(TAG, "学期结束日期转换失败: %s", semester_end_.c_str());
+        return false;
+    }
+
+    return target_date > end_time;
+}
+
 // ============================================================================
 // 课程更新（基于当前时间）
 // ============================================================================
@@ -435,6 +460,17 @@ const HomeData& HomeDataStore::UpdateSchedule() {
     if (now < 946684800) {
         // 时间尚未同步（2000-01-01 之前），无法计算
         ESP_LOGW(TAG, "系统时间尚未同步，无法计算课程");
+        data_.schedule_expired = false;
+        return data_;
+    }
+
+    data_.schedule_expired = IsScheduleExpired(now);
+    if (data_.schedule_expired) {
+        data_.today_schedule.day_name = "";
+        data_.today_schedule.courses.clear();
+        data_.tomorrow_schedule.day_name = "";
+        data_.tomorrow_schedule.courses.clear();
+        ESP_LOGI(TAG, "课程表已过期: end=%s", semester_end_.c_str());
         return data_;
     }
 

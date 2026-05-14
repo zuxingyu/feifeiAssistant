@@ -96,6 +96,7 @@ struct HomeData {
     std::string  weather_city;        ///< 天气城市名称
     time_t       last_weather_update; ///< 上次天气更新的 Unix 时间戳 (0 = 从未更新)
     bool         has_schedule;        ///< 是否已成功加载课程表配置
+    bool         schedule_expired;     ///< 当前日期是否已超过课程表结束日期
     bool         has_weather_config;  ///< 是否已配置天气 API
 };
 
@@ -223,6 +224,7 @@ private:
      * @return false 关键键缺失
      */
     bool LoadScheduleFromNvs();
+    bool IsScheduleExpired(time_t target_date) const;
 
     /**
      * @brief 从 NVS 读取天气 API 配置

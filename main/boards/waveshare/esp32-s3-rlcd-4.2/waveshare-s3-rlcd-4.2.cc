@@ -78,6 +78,13 @@ private:
         if (endpoint.empty()) {
             return MUSIC_RESOLVER_ENDPOINT;
         }
+        // 早期开发阶段保存过本机/局域网解析地址。MCP 迁移到公网后，
+        // 避免旧 NVS 配置继续覆盖默认公网地址导致设备解析失败。
+        if (endpoint.find("127.0.0.1") != std::string::npos ||
+            endpoint.find("localhost") != std::string::npos ||
+            endpoint.find("192.168.0.104") != std::string::npos) {
+            return MUSIC_RESOLVER_ENDPOINT;
+        }
         if (endpoint.find("/prepare") != std::string::npos) {
             return endpoint;
         }
