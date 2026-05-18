@@ -63,6 +63,7 @@ private:
     esp_event_handler_instance_t instance_got_ip_;
     esp_timer_handle_t scan_timer_ = nullptr;
     bool is_connecting_ = false;
+    int ap_client_count_ = 0;
     esp_netif_t* ap_netif_ = nullptr;
     std::vector<wifi_ap_record_t> ap_records_;
 

@@ -18,6 +18,7 @@
 #include "codecs/box_audio_codec.h"
 #include "wifi_manager.h"
 #include "wifi_station.h"
+#include "ssid_manager.h"
 #include "mcp_server.h"
 #include "settings.h"
 #include "lvgl.h"
@@ -240,7 +241,12 @@ private:
         struct MusicResolvePowerGuard {
             bool keep_performance = false;
             ~MusicResolvePowerGuard() {
-                if (!keep_performance) {
+                auto& app = Application::GetInstance();
+                auto& audio_service = app.GetAudioService();
+                auto state = app.GetDeviceState();
+                if (!keep_performance &&
+                    state == kDeviceStateIdle &&
+                    !audio_service.IsMusicPlaying()) {
                     Board::GetInstance().SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
                 }
             }
@@ -413,11 +419,7 @@ private:
         float t = 0.0f;
         float h = 0.0f;
         if (!ReadEnvFromShtc3(t, h)) {
-            ESP_LOGW(TAG, "SHTC3 init read failed");
-            i2c_master_bus_rm_device(env_sensor_dev_);
-            env_sensor_dev_ = nullptr;
-            env_sensor_type_ = EnvSensorType::None;
-            env_sensor_addr_ = 0;
+            ESP_LOGW(TAG, "SHTC3 init read failed, keep sensor for retry");
             return;
         }
 
@@ -771,7 +773,15 @@ private:
         boot_button_.OnClick([this]() {
             auto& app = Application::GetInstance();
             if (app.GetDeviceState() == kDeviceStateStarting) {
-                EnterWifiConfigMode();
+                if (SsidManager::GetInstance().GetSsidList().empty()) {
+                    EnterWifiConfigMode();
+                } else {
+                    ESP_LOGI(TAG, "BOOT ignored during startup while saved WiFi credentials exist");
+                    auto* display = GetDisplay();
+                    if (display != nullptr) {
+                        display->ShowNotification("正在连接 WiFi，请稍候");
+                    }
+                }
                 return;
             }
             app.ToggleChatState();

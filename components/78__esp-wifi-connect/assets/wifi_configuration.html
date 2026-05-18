@@ -181,8 +181,11 @@ function ls(){fetch('/api/config/status').then(function(r){return r.json()}).the
     h+='<div class="si"><span class="sl">🌤️ 天气</span><span class="sv">'+(d.weather_city||(d.weather_configured?'已配置':'未配置'))+'</span></div>';
     document.getElementById('sum').innerHTML=h}).catch(function(){document.getElementById('sum').innerHTML='加载失败'})}
 function fin(){var b=document.getElementById('fb');b.disabled=true;b.textContent='启动中...';
-  fetch('/api/finish',{method:'POST'}).then(function(){document.getElementById('c4').innerHTML='<div style="text-align:center"><div class="ok">🔄</div><h2 style="font-size:18px">设备正在重启...</h2><p style="font-size:13px;color:#666">请稍候，设备将自动连接WiFi并进入主页</p></div>'})
-  .catch(function(){b.disabled=false;b.textContent='✅ 完成启动'})}
+  fetch('/api/finish',{method:'POST'}).then(function(r){return r.json()}).then(function(j){
+    if(j.success){document.getElementById('c4').innerHTML='<div style="text-align:center"><div class="ok">🔄</div><h2 style="font-size:18px">设备正在重启...</h2><p style="font-size:13px;color:#666">请稍候，设备将自动连接WiFi并进入主页</p></div>';return}
+    ts(j.message||'WiFi连接失败，请检查密码');b.disabled=false;b.textContent='✅ 完成启动'
+  })
+  .catch(function(){ts('网络错误，请重试');b.disabled=false;b.textContent='✅ 完成启动'})}
 </script>
 </body>
 </html>

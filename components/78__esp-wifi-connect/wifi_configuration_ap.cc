@@ -9,6 +9,7 @@
 #include <esp_log.h>
 #include <esp_mac.h>
 #include <esp_netif.h>
+#include <esp_system.h>
 #include <lwip/ip_addr.h>
 #include <nvs.h>
 #include <nvs_flash.h>
@@ -75,6 +76,8 @@ void WifiConfigurationAp::SetSsidPrefix(const std::string &ssid_prefix)
 
 void WifiConfigurationAp::Start()
 {
+    ap_client_count_ = 0;
+
     // Register event handlers
     ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT,
                                                         ESP_EVENT_ANY_ID,
@@ -90,13 +93,11 @@ void WifiConfigurationAp::Start()
     StartAccessPoint();
     StartWebServer();
     
-    // Start scan immediately
-    esp_wifi_scan_start(nullptr, false);
     // Setup periodic WiFi scan timer
     esp_timer_create_args_t timer_args = {
         .callback = [](void* arg) {
             auto* self = static_cast<WifiConfigurationAp*>(arg);
-            if (!self->is_connecting_) {
+            if (!self->is_connecting_ && self->ap_client_count_ == 0) {
                 esp_wifi_scan_start(nullptr, false);
             }
         },
@@ -106,6 +107,9 @@ void WifiConfigurationAp::Start()
         .skip_unhandled_events = true
     };
     ESP_ERROR_CHECK(esp_timer_create(&timer_args, &scan_timer_));
+
+    // Start scan after timer creation so SCAN_DONE can safely reschedule.
+    esp_wifi_scan_start(nullptr, false);
 }
 
 std::string WifiConfigurationAp::GetSsid()
@@ -222,6 +226,7 @@ void WifiConfigurationAp::StartWebServer()
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.max_uri_handlers = 40;
     config.uri_match_fn = httpd_uri_match_wildcard;
+    config.stack_size = 8192;
     // 5G Network takes longer to connect
     config.recv_wait_timeout = 15;
     config.send_wait_timeout = 15;
@@ -578,11 +583,19 @@ void WifiConfigurationAp::StartWebServer()
     // -- POST /api/finish (connect WiFi + exit) --
     httpd_uri_t api_finish = {.uri="/api/finish",.method=HTTP_POST,.handler=[](httpd_req_t*r)->esp_err_t{
         auto*self=static_cast<WifiConfigurationAp*>(r->user_ctx);
-        nvs_handle_t nv;std::string sid,pwd;
+        nvs_handle_t nv;std::string sid,pwd,schedule,weather_key,weather_city;
         if(nvs_open("wifi",NVS_READONLY,&nv)==ESP_OK){char b[64]={};size_t z=sizeof(b);if(nvs_get_str(nv,"ssid",b,&z)==ESP_OK)sid=b;z=sizeof(b);if(nvs_get_str(nv,"password",b,&z)==ESP_OK)pwd=b;nvs_close(nv);}
-        if(!sid.empty())self->ConnectToWifi(sid,pwd);
-        httpd_resp_set_type(r,"application/json");httpd_resp_set_hdr(r,"Connection","close");httpd_resp_send(r,"{\"success\":true}",HTTPD_RESP_USE_STRLEN);
-        xTaskCreate([](void*c){vTaskDelay(pdMS_TO_TICKS(300));auto*s=static_cast<WifiConfigurationAp*>(c);if(s->on_exit_requested_)s->on_exit_requested_();vTaskDelete(NULL);},"fin",4096,self,5,NULL);
+        if(nvs_open("setup",NVS_READONLY,&nv)==ESP_OK){char b[4096]={};size_t z=sizeof(b);if(nvs_get_str(nv,"schedule",b,&z)==ESP_OK)schedule=b;char s[128]={};z=sizeof(s);if(nvs_get_str(nv,"weather_secret",s,&z)==ESP_OK)weather_key=s;z=sizeof(s);if(nvs_get_str(nv,"weather_city",s,&z)==ESP_OK)weather_city=s;nvs_close(nv);}
+        if(schedule.empty()||weather_key.empty()||weather_city.empty()){
+            httpd_resp_set_type(r,"application/json");httpd_resp_set_hdr(r,"Connection","close");
+            httpd_resp_send(r,"{\"success\":false,\"message\":\"请先完成课程表和天气配置\"}",HTTPD_RESP_USE_STRLEN);
+            return ESP_OK;
+        }
+        bool connected=!sid.empty()&&self->ConnectToWifi(sid,pwd);
+        httpd_resp_set_type(r,"application/json");httpd_resp_set_hdr(r,"Connection","close");
+        if(!connected){httpd_resp_send(r,"{\"success\":false,\"message\":\"WiFi连接失败，请检查密码\"}",HTTPD_RESP_USE_STRLEN);return ESP_OK;}
+        httpd_resp_send(r,"{\"success\":true}",HTTPD_RESP_USE_STRLEN);
+        xTaskCreate([](void*){vTaskDelay(pdMS_TO_TICKS(800));ESP_LOGI(TAG,"Setup finished, restarting device");esp_restart();},"fin",4096,nullptr,5,NULL);
         return ESP_OK;
     },.user_ctx=this};
     ESP_ERROR_CHECK(httpd_register_uri_handler(server_, &api_finish));
@@ -863,9 +876,20 @@ void WifiConfigurationAp::WifiEventHandler(void* arg, esp_event_base_t event_bas
     WifiConfigurationAp* self = static_cast<WifiConfigurationAp*>(arg);
     if (event_id == WIFI_EVENT_AP_STACONNECTED) {
         wifi_event_ap_staconnected_t* event = (wifi_event_ap_staconnected_t*) event_data;
+        self->ap_client_count_++;
+        if (self->scan_timer_) {
+            esp_timer_stop(self->scan_timer_);
+        }
+        esp_wifi_scan_stop();
         ESP_LOGI(TAG, "Station " MACSTR " joined, AID=%d", MAC2STR(event->mac), event->aid);
     } else if (event_id == WIFI_EVENT_AP_STADISCONNECTED) {
         wifi_event_ap_stadisconnected_t* event = (wifi_event_ap_stadisconnected_t*) event_data;
+        if (self->ap_client_count_ > 0) {
+            self->ap_client_count_--;
+        }
+        if (self->ap_client_count_ == 0 && self->scan_timer_) {
+            esp_timer_start_once(self->scan_timer_, 1000000);
+        }
         ESP_LOGI(TAG, "Station " MACSTR " left, AID=%d", MAC2STR(event->mac), event->aid);
     } else if (event_id == WIFI_EVENT_STA_CONNECTED) {
         xEventGroupSetBits(self->event_group_, WIFI_CONNECTED_BIT);
@@ -874,13 +898,27 @@ void WifiConfigurationAp::WifiEventHandler(void* arg, esp_event_base_t event_bas
     } else if (event_id == WIFI_EVENT_SCAN_DONE) {
         std::lock_guard<std::mutex> lock(self->mutex_);
         uint16_t ap_num = 0;
-        esp_wifi_scan_get_ap_num(&ap_num);
+        esp_err_t err = esp_wifi_scan_get_ap_num(&ap_num);
+        if (err == ESP_OK && ap_num > 0) {
+            if (ap_num > 20) {
+                ap_num = 20;
+            }
+            self->ap_records_.resize(ap_num);
+            err = esp_wifi_scan_get_ap_records(&ap_num, self->ap_records_.data());
+            if (err != ESP_OK) {
+                ESP_LOGW(TAG, "Failed to get scan records: %s", esp_err_to_name(err));
+                self->ap_records_.clear();
+            } else {
+                self->ap_records_.resize(ap_num);
+            }
+        } else {
+            self->ap_records_.clear();
+        }
 
-        self->ap_records_.resize(ap_num);
-        esp_wifi_scan_get_ap_records(&ap_num, self->ap_records_.data());
-
-        // 扫描完成，等待10秒后再次扫描
-        esp_timer_start_once(self->scan_timer_, 10 * 1000000);
+        // 有客户端连接配置页时不继续后台扫描，避免 APSTA 扫描和 HTTP 配网并发导致不稳定。
+        if (self->ap_client_count_ == 0 && self->scan_timer_) {
+            esp_timer_start_once(self->scan_timer_, 10 * 1000000);
+        }
     }
 }
 
